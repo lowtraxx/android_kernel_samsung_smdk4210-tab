@@ -27,7 +27,7 @@
 
 #define AUTOSUSPEND_DELAY_MS			500
 #define HOST_WAKEUP_TIMEOUT_JIFFIES		msecs_to_jiffies(500)
-#define WAIT_ENUMURATION_TIMEOUT_JIFFIES	msecs_to_jiffies(15000)
+#define WAIT_ENUMURATION_TIMEOUT_JIFFIES	msecs_to_jiffies(20000)
 #define MAX_RETRY	3
 
 enum RESUME_STATUS {

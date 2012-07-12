@@ -184,7 +184,7 @@ static int max77693_muic_get_comp2_comn1_pass2
 static int max77693_muic_set_comp2_comn1_pass2
 	(struct max77693_muic_info *info, int type, int path)
 {
-	/* type 1 == usb, type 2 == uart */
+	/* type 0 == usb, type 1 == uart */
 	u8 cntl1_val, cntl1_msk;
 	int ret = 0;
 	int val;
@@ -205,13 +205,13 @@ static int max77693_muic_set_comp2_comn1_pass2
 		}
 	} else if (type == 1) {
 		if (path == UART_PATH_AP) {
-			info->muic_data->sw_path = UART_PATH_AP;
+			info->muic_data->uart_path = UART_PATH_AP;
 			if (info->is_default_uart_path_cp)
 				val = MAX77693_MUIC_CTRL1_BIN_5_101;
 			else
 				val = MAX77693_MUIC_CTRL1_BIN_3_011;
 		} else if (path == UART_PATH_CP) {
-			info->muic_data->sw_path = UART_PATH_CP;
+			info->muic_data->uart_path = UART_PATH_CP;
 			if (info->is_default_uart_path_cp)
 				val = MAX77693_MUIC_CTRL1_BIN_3_011;
 			else
@@ -239,7 +239,7 @@ static int max77693_muic_set_comp2_comn1_pass2
 		}
 #ifdef CONFIG_LTE_VIA_SWITCH
 		else if (path == UART_PATH_LTE) {
-			info->muic_data->sw_path = UART_PATH_LTE;
+			info->muic_data->uart_path = UART_PATH_LTE;
 			val = MAX77693_MUIC_CTRL1_BIN_5_101;
 			if (gpio_is_valid(GPIO_LTE_VIA_UART_SEL)) {
 				gpio_set_value(GPIO_LTE_VIA_UART_SEL,
@@ -412,7 +412,7 @@ static ssize_t max77693_muic_show_manualsw(struct device *dev,
 {
 	struct max77693_muic_info *info = dev_get_drvdata(dev);
 
-#if !defined(CONFIG_MACH_T0)
+#if !defined(CONFIG_MACH_T0) && !defined(CONFIG_MACH_C2)
 	dev_info(info->dev, "func:%s ap(0),cp(1),vps(2)sw_path:%d(%d)\n",
 		 __func__, info->muic_data->sw_path,
 			gpio_get_value(GPIO_USB_SEL));/*For debuging*/
@@ -425,6 +425,10 @@ static ssize_t max77693_muic_show_manualsw(struct device *dev,
 		return sprintf(buf, "MODEM\n");
 	case AUDIO_MODE:
 		return sprintf(buf, "Audio\n");
+#if defined(CONFIG_SWITCH_DUAL_MODEM)
+	case CP_ESC_USB_MODE:
+		return sprintf(buf, "ESC\n");
+#endif
 	default:
 		break;
 	}
@@ -445,7 +449,19 @@ static ssize_t max77693_muic_set_manualsw(struct device *dev,
 		dev_info(info->dev, "%s: AP_USB_MODE\n", __func__);
 	} else if (!strncasecmp(buf, "MODEM", 5)) {
 		info->muic_data->sw_path = CP_USB_MODE;
+#if defined(CONFIG_SWITCH_DUAL_MODEM)
+		gpio_set_value(GPIO_USB_SEL, GPIO_LEVEL_LOW);
+		dev_info(info->dev, "%s: MODEM %d\n", __func__,
+			gpio_get_value(GPIO_USB_SEL));
+#endif
 		dev_info(info->dev, "%s: CP_USB_MODE\n", __func__);
+#if defined(CONFIG_SWITCH_DUAL_MODEM)
+	} else if (!strncasecmp(buf, "ESC", 3)) {
+		info->muic_data->sw_path = CP_ESC_USB_MODE;
+		gpio_set_value(GPIO_USB_SEL, GPIO_LEVEL_HIGH);
+		dev_info(info->dev, "%s: ESC %d\n", __func__,
+			gpio_get_value(GPIO_USB_SEL));
+#endif
 	} else
 		dev_warn(info->dev, "%s: Wrong command\n", __func__);
 
@@ -638,7 +654,7 @@ static ssize_t max77693_muic_set_uart_sel(struct device *dev,
 	struct max77693_muic_info *info = dev_get_drvdata(dev);
 
 	if (info->max77693->pmic_rev < MAX77693_REV_PASS2) {
-#if !defined(CONFIG_MACH_T0)
+#if !defined(CONFIG_MACH_T0) && !defined(CONFIG_MACH_C2)
 		if (!strncasecmp(buf, "AP", 2)) {
 			info->muic_data->uart_path = UART_PATH_AP;
 			if (gpio_is_valid(GPIO_UART_SEL)) {
@@ -704,6 +720,11 @@ static ssize_t max77693_muic_set_uart_sel(struct device *dev,
 			else
 				dev_err(info->dev, "%s: Change(CP) fail!!"
 							, __func__);
+#if defined(CONFIG_SWITCH_DUAL_MODEM)
+			gpio_set_value(GPIO_UART_SEL, GPIO_LEVEL_LOW);
+			dev_info(info->dev, "%s: CP %d\n", __func__,
+				gpio_get_value(GPIO_UART_SEL));
+#endif
 		}
 #ifdef CONFIG_LTE_VIA_SWITCH
 		else if (!strncasecmp(buf, "LTE", 3)) {
@@ -716,6 +737,22 @@ static ssize_t max77693_muic_set_uart_sel(struct device *dev,
 							, __func__);
 		}
 #endif
+#if defined(CONFIG_SWITCH_DUAL_MODEM)
+		else if (!strncasecmp(buf, "ESC", 3)) {
+			int ret = max77693_muic_set_uart_path_pass2
+				(info, UART_PATH_CP);
+			if (ret >= 0)
+				info->muic_data->uart_path = UART_PATH_CP;
+			else
+				dev_err(info->dev, "%s: Change(CP) fail!!"
+							, __func__);
+			gpio_set_value(GPIO_UART_SEL, GPIO_LEVEL_HIGH);
+			info->muic_data->uart_path = UART_PATH_CP_ESC;
+			dev_info(info->dev, "%s: ESC %d\n", __func__,
+				gpio_get_value(GPIO_UART_SEL));
+		}
+#endif
+
 		else {
 				dev_warn(info->dev, "%s: Wrong command\n"
 							, __func__);
@@ -730,7 +767,7 @@ static ssize_t max77693_muic_show_uart_sel(struct device *dev,
 {
 	struct max77693_muic_info *info = dev_get_drvdata(dev);
 	if (info->max77693->pmic_rev < MAX77693_REV_PASS2) {
-#if !defined(CONFIG_MACH_T0)
+#if !defined(CONFIG_MACH_T0) && !defined(CONFIG_MACH_C2)
 		switch (info->muic_data->uart_path) {
 		case UART_PATH_AP:
 			if (gpio_get_value(GPIO_UART_SEL) == GPIO_LEVEL_HIGH)
@@ -766,26 +803,24 @@ static ssize_t max77693_muic_show_uart_sel(struct device *dev,
 		}
 #endif /* !defined(CONFIG_MACH_T0) */
 	} else if (info->max77693->pmic_rev >= MAX77693_REV_PASS2) {
-		int val = max77693_muic_get_uart_path_pass2(info);
 		switch (info->muic_data->uart_path) {
 		case UART_PATH_AP:
-			if (val == UART_PATH_AP)
-				return sprintf(buf, "AP\n");
-			else
-				return sprintf(buf, "ERR_AP\n");
+			return sprintf(buf, "AP\n");
 			break;
 		case UART_PATH_CP:
-			if (val == UART_PATH_CP)
-				return sprintf(buf, "CP\n");
-			else
-				return sprintf(buf, "ERR_CP\n");
+			return sprintf(buf, "CP\n");
 			break;
 #ifdef CONFIG_LTE_VIA_SWITCH
 		case UART_PATH_LTE:
-			if (val == UART_PATH_LTE)
-				return sprintf(buf, "LTE\n");
+			return sprintf(buf, "LTE\n");
+			break;
+#endif
+#if defined(CONFIG_SWITCH_DUAL_MODEM)
+		case UART_PATH_CP_ESC:
+			if (gpio_get_value(GPIO_UART_SEL))
+				return sprintf(buf, "ESC\n");
 			else
-				return sprintf(buf, "ERR_LTE\n");
+				return sprintf(buf, "ERR_CP_ESC\n");
 			break;
 #endif
 		default:
@@ -1181,8 +1216,12 @@ static int max77693_muic_attach_usb_type(struct max77693_muic_info *info,
 		info->cable_type = CABLE_TYPE_NONE_MUIC;
 		return ret;
 	}
-
+#if defined(CONFIG_SWITCH_DUAL_MODEM)
+	if (mdata->sw_path == CP_USB_MODE ||
+		mdata->sw_path == CP_ESC_USB_MODE) {
+#else
 	if (mdata->sw_path == CP_USB_MODE) {
+#endif
 		info->cable_type = CABLE_TYPE_USB_MUIC;
 #if defined(CONFIG_MACH_M0_CTC)
 		if (system_rev < 11) {
@@ -1264,6 +1303,7 @@ static int max77693_muic_attach_dock_type(struct max77693_muic_info *info,
 	return 0;
 }
 
+#if !defined(CONFIG_MUIC_MAX77693_SEPARATE_MHL_PORT)
 static void max77693_muic_attach_mhl(struct max77693_muic_info *info, u8 chgtyp)
 {
 	struct max77693_muic_data *mdata = info->muic_data;
@@ -1297,6 +1337,7 @@ static void max77693_muic_attach_mhl(struct max77693_muic_info *info, u8 chgtyp)
 		max77693_muic_set_charging_type(info, false);
 	}
 }
+#endif /* !CONFIG_MUIC_MAX77693_SEPARATE_MHL_PORT */
 
 static void max77693_muic_handle_jig_uart(struct max77693_muic_info *info,
 					  u8 vbvolt)
@@ -1575,7 +1616,9 @@ static int max77693_muic_handle_attach(struct max77693_muic_info *info,
 			}
 			return 0;
 		}
+#if !defined(CONFIG_MUIC_MAX77693_SEPARATE_MHL_PORT)
 		max77693_muic_attach_mhl(info, chgtyp);
+#endif
 		return 0;
 	}
 
@@ -2107,6 +2150,7 @@ static void max77693_muic_usb_detect(struct work_struct *work)
 	mutex_unlock(&info->mutex);
 }
 
+#if !defined(CONFIG_MUIC_MAX77693_SEPARATE_MHL_PORT)
 static void max77693_muic_mhl_detect(struct work_struct *work)
 {
 	struct max77693_muic_info *info =
@@ -2130,12 +2174,13 @@ static void max77693_muic_mhl_detect(struct work_struct *work)
 	}
 	mutex_unlock(&info->mutex);
 }
+#endif /* !CONFIG_MUIC_MAX77693_SEPARATE_MHL_PORT */
 
 static int uart_switch_init(struct max77693_muic_info *info)
 {
 	int ret, val;
 
-#if !defined(CONFIG_MACH_T0)
+#if !defined(CONFIG_MACH_T0) && !defined(CONFIG_MACH_C2)
 	if (info->max77693->pmic_rev < MAX77693_REV_PASS2) {
 		ret = gpio_request(GPIO_UART_SEL, "UART_SEL");
 		if (ret < 0) {
@@ -2261,20 +2306,6 @@ void max77693_update_jig_state(struct max77693_muic_info *info)
 	mdata->jig_state(jig_state);
 }
 
-static struct platform_device *max77693_muic_pdevice;
-
-cable_type_t max77693_muic_get_attached_device(void)
-{
-	struct max77693_muic_info *info =
-		platform_get_drvdata(max77693_muic_pdevice);
-
-	if (info)
-		return info->cable_type;
-
-	return CABLE_TYPE_NONE_MUIC;
-}
-EXPORT_SYMBOL(max77693_muic_get_attached_device);
-
 static int __devinit max77693_muic_probe(struct platform_device *pdev)
 {
 	struct max77693_dev *max77693 = dev_get_drvdata(pdev->dev.parent);
@@ -2388,6 +2419,12 @@ static int __devinit max77693_muic_probe(struct platform_device *pdev)
 			if (switch_sel & MAX77693_SWITCH_SEL_3rd_BIT_LTE_UART)
 				info->muic_data->uart_path = UART_PATH_LTE;
 #endif
+#if defined(CONFIG_SWITCH_DUAL_MODEM)
+		if (gpio_is_valid(GPIO_USB_SEL))
+			gpio_direction_output(GPIO_USB_SEL, GPIO_LEVEL_HIGH);
+		if (gpio_is_valid(GPIO_UART_SEL))
+			gpio_direction_output(GPIO_UART_SEL, GPIO_LEVEL_HIGH);
+#endif
 		}
 		pr_info("%s: switch_sel: %x\n", __func__, switch_sel);
 	}
@@ -2442,10 +2479,10 @@ static int __devinit max77693_muic_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&info->usb_work, max77693_muic_usb_detect);
 	schedule_delayed_work(&info->usb_work, msecs_to_jiffies(17000));
 
+#if !defined(CONFIG_MUIC_MAX77693_SEPARATE_MHL_PORT)
 	INIT_DELAYED_WORK(&info->mhl_work, max77693_muic_mhl_detect);
 	schedule_delayed_work(&info->mhl_work, msecs_to_jiffies(25000));
-
-    max77693_muic_pdevice = pdev;
+#endif
 
 	return 0;
 

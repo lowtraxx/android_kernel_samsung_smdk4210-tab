@@ -39,9 +39,16 @@ void s3cfb_check_line_count(struct s3cfb_global *ctrl)
 	}
 }
 
-int s3cfb_check_vsync_status(struct s3cfb_global *ctrl, void __iomem* regs)
+int s3cfb_check_vsync_status(struct s3cfb_global *ctrl)
 {
-	u32 cfg = (readl(regs + S3C_VIDCON1) & S3C_VIDCON1_VSTATUS_MASK);
+	u32 cfg;
+
+	if (unlikely(!ctrl->regs)) {
+		dev_err(ctrl->dev, "reg is zero\n");
+		return 0;
+	}
+
+	cfg = (readl(ctrl->regs + S3C_VIDCON1) & S3C_VIDCON1_VSTATUS_MASK);
 
 	if (cfg != S3C_VIDCON1_VSTATUS_ACTIVE && cfg != S3C_VIDCON1_VSTATUS_BACK)
 		return 1;
@@ -351,11 +358,11 @@ int s3cfb_set_lcd_size(struct s3cfb_global *ctrl)
 	return 0;
 }
 
-int s3cfb_set_global_interrupt(struct s3cfb_global *ctrl, void __iomem *regs, int enable)
+int s3cfb_set_global_interrupt(struct s3cfb_global *ctrl, int enable)
 {
 	u32 cfg = 0;
 
-	cfg = readl(regs + S3C_VIDINTCON0);
+	cfg = readl(ctrl->regs + S3C_VIDINTCON0);
 	cfg &= ~(S3C_VIDINTCON0_INTFRMEN_ENABLE | S3C_VIDINTCON0_INT_ENABLE);
 
 	if (enable) {
@@ -368,16 +375,16 @@ int s3cfb_set_global_interrupt(struct s3cfb_global *ctrl, void __iomem *regs, in
 			S3C_VIDINTCON0_INT_DISABLE);
 	}
 
-	writel(cfg, regs + S3C_VIDINTCON0);
+	writel(cfg, ctrl->regs + S3C_VIDINTCON0);
 
 	return 0;
 }
 
-int s3cfb_set_vsync_interrupt(struct s3cfb_global *ctrl, void __iomem *regs, int enable)
+int s3cfb_set_vsync_interrupt(struct s3cfb_global *ctrl, int enable)
 {
 	u32 cfg = 0;
 
-	cfg = readl(regs + S3C_VIDINTCON0);
+	cfg = readl(ctrl->regs + S3C_VIDINTCON0);
 	cfg &= ~S3C_VIDINTCON0_FRAMESEL0_MASK;
 
 	if (enable) {
@@ -388,16 +395,16 @@ int s3cfb_set_vsync_interrupt(struct s3cfb_global *ctrl, void __iomem *regs, int
 		cfg &= ~S3C_VIDINTCON0_FRAMESEL0_VSYNC;
 	}
 
-	writel(cfg, regs + S3C_VIDINTCON0);
+	writel(cfg, ctrl->regs + S3C_VIDINTCON0);
 
 	return 0;
 }
 
-int s3cfb_get_vsync_interrupt(struct s3cfb_global *ctrl, void __iomem *regs)
+int s3cfb_get_vsync_interrupt(struct s3cfb_global *ctrl)
 {
 	u32 cfg = 0;
 
-	cfg = readl(regs + S3C_VIDINTCON0);
+	cfg = readl(ctrl->regs + S3C_VIDINTCON0);
 	cfg &= S3C_VIDINTCON0_FRAMESEL0_VSYNC;
 
 	if (cfg & S3C_VIDINTCON0_FRAMESEL0_VSYNC) {
@@ -796,12 +803,13 @@ int s3cfb_set_alpha_blending(struct s3cfb_global *ctrl, int id)
 
 int s3cfb_set_oneshot(struct s3cfb_global *ctrl, int id)
 {
-	/*  s3cfb_set_window_position */
 	struct s3c_platform_fb *pdata = to_fb_plat(ctrl->dev);
 	struct fb_var_screeninfo *var = &ctrl->fb[id]->var;
+	struct fb_fix_screeninfo *fix = &ctrl->fb[id]->fix;
 	struct s3cfb_window *win = ctrl->fb[id]->par;
 	u32 cfg, shw;
 	u32 offset = (var->xres_virtual - var->xres) * var->bits_per_pixel / 8;
+	dma_addr_t start_addr = 0, end_addr = 0;
 
 	/*  Shadow Register Protection */
 	if ((pdata->hw_ver == 0x62) || (pdata->hw_ver == 0x70)) {
@@ -810,6 +818,7 @@ int s3cfb_set_oneshot(struct s3cfb_global *ctrl, int id)
 		writel(shw, ctrl->regs + S3C_WINSHMAP);
 	}
 
+	/*  s3cfb_set_window_position */
 	cfg = S3C_VIDOSD_LEFT_X(win->x) | S3C_VIDOSD_TOP_Y(win->y);
 	writel(cfg, ctrl->regs + S3C_VIDOSD_A(id));
 
@@ -819,6 +828,21 @@ int s3cfb_set_oneshot(struct s3cfb_global *ctrl, int id)
 
 	dev_dbg(ctrl->dev, "[fb%d] offset: (%d, %d, %d, %d)\n", id,
 			win->x, win->y, win->x + var->xres - 1, win->y + var->yres - 1);
+
+	/* s3cfb_set_buffer_address */
+	if (fix->smem_start) {
+		start_addr = fix->smem_start + ((var->xres_virtual *
+				var->yoffset + var->xoffset) *
+				(var->bits_per_pixel / 8));
+
+		end_addr = start_addr + fix->line_length * var->yres;
+	}
+
+	writel(start_addr, ctrl->regs + S3C_VIDADDR_START0(id));
+	writel(end_addr, ctrl->regs + S3C_VIDADDR_END0(id));
+
+	dev_dbg(ctrl->dev, "[fb%d] start_addr: 0x%08x, end_addr: 0x%08x\n",
+		id, start_addr, end_addr);
 
 	/*  s3cfb_set_window_size */
 	if (id <= 2) {
@@ -964,3 +988,11 @@ int s3cfb_set_chroma_key(struct s3cfb_global *ctrl, int id)
 
 	return 0;
 }
+
+int s3cfb_set_dualrgb(struct s3cfb_global *ctrl, int mode)
+{
+	writel(mode, ctrl->regs + S3C_DUALRGB);
+
+	return 0;
+}
+

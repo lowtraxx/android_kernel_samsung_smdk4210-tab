@@ -11,18 +11,45 @@
 #include <linux/sensor/cm36651.h>
 #include <linux/sensor/cm3663.h>
 #include <linux/sensor/bh1721.h>
-
+#include <linux/delay.h>
 #include <plat/gpio-cfg.h>
 #include <mach/regs-gpio.h>
 #include <mach/gpio.h>
 #include "midas.h"
 
-static int accel_get_position(void);
+#ifdef CONFIG_SENSORS_SSP
+#include <linux/ssp_platformdata.h>
+#endif
+
+
+#if defined(CONFIG_SENSORS_LSM330DLC) ||\
+	defined(CONFIG_SENSORS_K3DH)
+static int stm_get_position(void);
 
 static struct accel_platform_data accel_pdata = {
-	.accel_get_position = accel_get_position,
+	.accel_get_position = stm_get_position,
 	.axis_adjust = true,
 };
+#endif
+
+#ifdef CONFIG_SENSORS_LSM330DLC
+static struct gyro_platform_data gyro_pdata = {
+	.gyro_get_position = stm_get_position,
+	.axis_adjust = true,
+};
+#endif
+
+#ifdef CONFIG_SENSORS_SSP
+static int wakeup_mcu(void);
+static int check_mcu_ready(void);
+static int set_mcu_reset(int on);
+
+static struct ssp_platform_data ssp_pdata = {
+	.wakeup_mcu = wakeup_mcu,
+	.check_mcu_ready = check_mcu_ready,
+	.set_mcu_reset = set_mcu_reset,
+};
+#endif
 
 static struct i2c_board_info i2c_devs1[] __initdata = {
 #ifdef CONFIG_SENSORS_LSM330DLC
@@ -32,25 +59,83 @@ static struct i2c_board_info i2c_devs1[] __initdata = {
 	},
 	{
 		I2C_BOARD_INFO("lsm330dlc_gyro", (0xD6 >> 1)),
+		.platform_data = &gyro_pdata,
 	},
 #elif defined(CONFIG_SENSORS_K3DH)
 	{
 		I2C_BOARD_INFO("k3dh", 0x19),
 		.platform_data	= &accel_pdata,
 	},
+#elif defined(CONFIG_SENSORS_SSP)
+	{
+		I2C_BOARD_INFO("ssp", 0x18),
+		.platform_data = &ssp_pdata,
+		.irq = GPIO_MCU_AP_INT,
+	},
 #endif
 };
 
-static int accel_get_position(void)
+#ifdef CONFIG_SENSORS_SSP
+static int initialize_ssp_gpio(void)
+{
+	int err;
+
+	err = gpio_request(GPIO_AP_MCU_INT, "AP_MCU_INT_PIN");
+	if (err)
+		printk(KERN_ERR "failed to request AP_MCU_INT for SSP\n");
+
+	s3c_gpio_cfgpin(GPIO_AP_MCU_INT, S3C_GPIO_OUTPUT);
+	s3c_gpio_setpull(GPIO_AP_MCU_INT, S3C_GPIO_PULL_NONE);
+	gpio_direction_output(GPIO_AP_MCU_INT, 0);
+
+	err = gpio_request(GPIO_MCU_AP_INT_2, "AP_MCU_INT_PIN2");
+	if (err)
+		printk(KERN_ERR "failed to request AP_MCU_INT for SSP\n");
+	s3c_gpio_cfgpin(GPIO_MCU_AP_INT_2, S3C_GPIO_INPUT);
+	s3c_gpio_setpull(GPIO_MCU_AP_INT_2, S3C_GPIO_PULL_NONE);
+
+	err = gpio_request(GPIO_MCU_NRST, "AP_MCU_RESET");
+	if (err)
+		printk(KERN_ERR "failed to request AP_MCU_RESET for SSP\n");
+	s3c_gpio_cfgpin(GPIO_MCU_NRST, S3C_GPIO_OUTPUT);
+	s3c_gpio_setpull(GPIO_MCU_NRST, S3C_GPIO_PULL_NONE);
+	gpio_direction_output(GPIO_MCU_NRST, 1);
+
+	return 0;
+}
+
+static int wakeup_mcu(void)
+{
+	gpio_set_value(GPIO_AP_MCU_INT, 1);
+	udelay(1);
+	gpio_set_value(GPIO_AP_MCU_INT, 0);
+
+	return 0;
+}
+
+static int set_mcu_reset(int on)
+{
+	if (on == 0)
+		gpio_set_value(GPIO_MCU_NRST, 0);
+	else
+		gpio_set_value(GPIO_MCU_NRST, 1);
+
+	return 0;
+}
+
+static int check_mcu_ready(void)
+{
+	return gpio_get_value(GPIO_MCU_AP_INT_2);
+}
+#endif
+
+#if defined(CONFIG_SENSORS_LSM330DLC) || \
+	defined(CONFIG_SENSORS_K3DH)
+static int stm_get_position(void)
 {
 	int position = 0;
 
-#if defined(CONFIG_MACH_C1VZW) /* C1_SPR */
-	if (system_rev == 1)
-		position = 3; /* top/lower-left */
-	else
-		position = 2; /* top/lower-right */
-#elif defined(CONFIG_MACH_C1CTC)
+#if defined(CONFIG_MACH_C1VZW) || defined(CONFIG_MACH_C2) /* C2_SPR, M3 */
 		position = 2; /* top/lower-right */
 #elif defined(CONFIG_MACH_M0_CMCC)
 	if (system_rev == 2)
@@ -69,8 +154,6 @@ static int accel_get_position(void)
 		position = 4; /* bottom/upper-left */
 	else
 		position = 3; /* top/lower-left */
-#elif defined(CONFIG_MACH_S2PLUS)
-	position = 3; /* top/lower-left */
 #elif defined(CONFIG_MACH_P4NOTE)
 	position = 4; /* bottom/upper-left */
 #elif defined(CONFIG_MACH_M0)
@@ -89,15 +172,18 @@ static int accel_get_position(void)
 	else
 		position = 2; /* top/lower-right */
 #elif defined(CONFIG_MACH_GC1)
-	position = 1;
+	if (system_rev < 2)
+		position = 0; /* top/upper-left */
+	else if (system_rev < 4)
+		position = 1;/* top/upper-right */
+	else
+		position = 0; /* top/upper-left */
 #else /* Common */
 	position = 2; /* top/lower-right */
 #endif
 	return position;
 }
 
-#if defined(CONFIG_SENSORS_LSM330DLC) || \
-	defined(CONFIG_SENSORS_K3DH)
 static int accel_gpio_init(void)
 {
 	int ret = gpio_request(GPIO_ACC_INT, "accelerometer_irq");
@@ -212,7 +298,7 @@ static u8 cm36651_get_threshold(void)
 	defined(CONFIG_MACH_C1_KOR_LGT)
 	if (system_rev >= 6)
 		threshold = 15;
-#elif defined(CONFIG_MACH_C1VZW)
+#elif defined(CONFIG_MACH_C1VZW) || defined(CONFIG_MACH_C2)
 	if (system_rev >= 11)
 		threshold = 15;
 #elif defined(CONFIG_MACH_C1)
@@ -360,6 +446,8 @@ static int __init midas_sensor_init(void)
 		pr_err("%s, accel_gpio_init fail(err=%d)\n", __func__, ret);
 		return ret;
 	}
+#elif defined(CONFIG_SENSORS_SSP)
+	initialize_ssp_gpio();
 #endif
 	ret = i2c_add_devices(1, i2c_devs1, ARRAY_SIZE(i2c_devs1));
 	if (ret < 0) {

@@ -389,6 +389,35 @@ static struct attribute_group sec_key_attr_group = {
 	.attrs = sec_key_attrs,
 };
 
+#ifdef CONFIG_MACH_GC1
+void gpio_keys_check_zoom_exception(unsigned int code,
+	bool *zoomkey, unsigned int *hotkey, unsigned int *index)
+{
+	switch (code) {
+	case KEY_CAMERA_ZOOMIN:
+		*hotkey = 0x221;
+		*index = 5;
+		break;
+	case KEY_CAMERA_ZOOMOUT:
+		*hotkey = 0x222;
+		*index = 6;
+		break;
+	case 0x221:
+		*hotkey = KEY_CAMERA_ZOOMIN;
+		*index = 3;
+		break;
+	case 0x222:
+		*hotkey = KEY_CAMERA_ZOOMOUT;
+		*index = 4;
+		break;
+	default:
+		*zoomkey = false;
+		return;
+	}
+	*zoomkey = true;
+}
+#endif
+
 static void gpio_keys_report_event(struct gpio_button_data *bdata)
 {
 	struct gpio_keys_button *button = bdata->button;
@@ -396,6 +425,34 @@ static void gpio_keys_report_event(struct gpio_button_data *bdata)
 	unsigned int type = button->type ?: EV_KEY;
 	int state = (gpio_get_value_cansleep(button->gpio) ? 1 : 0)
 		^ button->active_low;
+#ifdef CONFIG_MACH_GC1
+	struct gpio_keys_drvdata *ddata = input_get_drvdata(input);
+	struct gpio_button_data *tmp_bdata;
+	static bool overlapped;
+	static unsigned int hotkey;
+	unsigned int index_hotkey = 0;
+	bool zoomkey = false;
+
+	if (system_rev >= 2) {
+		if (overlapped) {
+			if (hotkey == button->code && !state) {
+				bdata->key_state = !!state;
+				bdata->wakeup = false;
+				overlapped = false;
+#ifdef CONFIG_SAMSUNG_PRODUCT_SHIP
+				printk(KERN_DEBUG"[KEYS] Ignored\n");
+#else
+				printk(KERN_DEBUG"[KEYS] Ignore %d %d\n",
+						hotkey, state);
+#endif
+				return;
+			}
+		}
+
+		gpio_keys_check_zoom_exception(button->code, &zoomkey,
+				&hotkey, &index_hotkey);
+	}
+#endif
 
 	if (type == EV_ABS) {
 		if (state)
@@ -410,6 +467,23 @@ static void gpio_keys_report_event(struct gpio_button_data *bdata)
 		bdata->key_state = !!state;
 		bdata->wakeup = false;
 
+
+#ifdef CONFIG_MACH_GC1
+		if (system_rev >= 2 && zoomkey && state) {
+			tmp_bdata = &ddata->data[index_hotkey];
+
+			if (tmp_bdata->key_state) {
+#ifdef CONFIG_SAMSUNG_PRODUCT_SHIP
+				printk(KERN_DEBUG"[KEYS] overlapped\n");
+#else
+				printk(KERN_DEBUG"[KEYS] overlapped. Forced release c %d h %d\n",
+					tmp_bdata->button->code, hotkey);
+#endif
+				input_event(input, type, hotkey, 0);
+				overlapped = true;
+			}
+		}
+#endif
 		input_event(input, type, button->code, !!state);
 		if (button->code == KEY_POWER)
 			printk(KERN_DEBUG"[keys]PWR %d\n", !!state);

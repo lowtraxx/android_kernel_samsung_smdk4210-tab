@@ -134,8 +134,6 @@ static struct class *android_class;
 static struct android_dev *_android_dev;
 static int android_bind_config(struct usb_configuration *c);
 static void android_unbind_config(struct usb_configuration *c);
-static int android_setup(struct usb_configuration *c,
-			 const struct usb_ctrlrequest *ctrl);
 
 static DEFINE_MUTEX(enable_lock);
 
@@ -178,7 +176,6 @@ static struct usb_device_descriptor device_desc = {
 static struct usb_configuration first_config_driver = {
 	.label = "slp_first_config",
 	.unbind = android_unbind_config,
-	.setup = android_setup,
 	.bConfigurationValue = USB_CONFIGURATION_1,
 	.bmAttributes = USB_CONFIG_ATT_ONE | USB_CONFIG_ATT_SELFPOWER,
 	.bMaxPower = 0x30,	/* 96ma */
@@ -187,7 +184,6 @@ static struct usb_configuration first_config_driver = {
 static struct usb_configuration second_config_driver = {
 	.label = "slp_second_config",
 	.unbind = android_unbind_config,
-	.setup = android_setup,
 	.bConfigurationValue = USB_CONFIGURATION_2,
 	.bmAttributes = USB_CONFIG_ATT_ONE | USB_CONFIG_ATT_SELFPOWER,
 	.bMaxPower = 0x30,	/* 96ma */
@@ -1323,20 +1319,35 @@ static struct usb_composite_driver android_usb_driver = {
 };
 
 static int
-android_setup(struct usb_configuration *c, const struct usb_ctrlrequest *ctrl)
+android_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 {
 	struct android_dev *adev = _android_dev;
+	struct usb_composite_dev *cdev = get_gadget_data(gadget);
+	u8 b_requestType = ctrl->bRequestType;
 	struct android_usb_function *f;
 	int value = -EOPNOTSUPP;
 
-	/* To check & report it to platform , we check it all */
-	list_for_each_entry(f, &adev->available_functions, available_list) {
-		if (f->ctrlrequest) {
-			value = f->ctrlrequest(f, c->cdev, ctrl);
-			if (value >= 0)
-				break;
+	if ((b_requestType & USB_TYPE_MASK) == USB_TYPE_VENDOR) {
+		struct usb_request *req = cdev->req;
+
+		req->zero = 0;
+		req->complete = composite_setup_complete;
+		req->length = 0;
+		gadget->ep0->driver_data = cdev;
+
+		/* To check & report it to platform , we check it all */
+		list_for_each_entry(f, &adev->available_functions,
+			available_list) {
+			if (f->ctrlrequest) {
+				value = f->ctrlrequest(f, cdev, ctrl);
+				if (value >= 0)
+					break;
+			}
 		}
 	}
+
+	if (value < 0)
+		value = composite_setup(gadget, ctrl);
 
 	return value;
 }
@@ -1428,6 +1439,9 @@ static int __devinit slp_multi_probe(struct platform_device *pdev)
 
 	slp_multi_nluns = pdata->nluns;
 	_android_dev = adev;
+
+	/* Override composite driver functions */
+	composite_driver.setup = android_setup;
 
 	err = usb_composite_probe(&android_usb_driver, android_bind);
 	if (err) {

@@ -81,7 +81,7 @@ enum {
 do { \
 	if (ctl_msg_dbg_mask & MSM_USB_CTL_DUMP_BUFFER) \
 			print_hex_dump(KERN_INFO, prestr, DUMP_PREFIX_NONE, \
-					16, 1, buf, cnt, false); \
+				16, 1, buf, cnt > 16 ? 16 : cnt, false); \
 } while (0)
 
 #define DBG(x...) \
@@ -126,11 +126,14 @@ static void notification_available_cb(struct urb *urb)
 	struct usb_cdc_notification	*ctrl;
 	struct usb_device		*udev;
 	struct rmnet_ctrl_dev		*dev = urb->context;
+	unsigned int		iface_num;
 
 	udev = interface_to_usbdev(dev->intf);
+	iface_num = dev->intf->cur_altsetting->desc.bInterfaceNumber;
 
 	switch (urb->status) {
 	case 0:
+		pr_info("[NACB:%d]<\n", iface_num);
 		/*success*/
 		break;
 
@@ -166,12 +169,14 @@ static void notification_available_cb(struct urb *urb)
 					DEFAULT_READ_URB_LENGTH,
 					resp_avail_cb, dev);
 
+		usb_mark_last_busy(udev);
 		status = usb_submit_urb(dev->rcvurb, GFP_ATOMIC);
 		if (status) {
 			dev_err(dev->devicep,
 			"%s: Error submitting Read URB %d\n", __func__, status);
 			goto resubmit_int_urb;
-		}
+		} else
+			pr_info("[NRA:%d]>\n", iface_num);
 
 		if (!dev->resp_available) {
 			dev->resp_available = true;
@@ -185,6 +190,7 @@ static void notification_available_cb(struct urb *urb)
 	}
 
 resubmit_int_urb:
+	usb_mark_last_busy(udev);
 	status = usb_submit_urb(urb, GFP_ATOMIC);
 	if (status)
 		dev_err(dev->devicep, "%s: Error re-submitting Int URB %d\n",
@@ -201,13 +207,18 @@ static void resp_avail_cb(struct urb *urb)
 	void				*cpkt;
 	int				status = 0;
 	size_t				cpkt_size = 0;
+	unsigned int		iface_num;
 
 	udev = interface_to_usbdev(dev->intf);
+	iface_num = dev->intf->cur_altsetting->desc.bInterfaceNumber;
+
+	usb_mark_last_busy(udev);
 
 	switch (urb->status) {
 	case 0:
 		/*success*/
 		dev->get_encap_resp_cnt++;
+		pr_info("[RACB:%d]<\n", iface_num);
 		break;
 
 	/*do not resubmit*/
@@ -231,6 +242,12 @@ static void resp_avail_cb(struct urb *urb)
 
 	cpkt = urb->transfer_buffer;
 	cpkt_size = urb->actual_length;
+	if (!cpkt_size) {
+		dev->zlp_cnt++;
+		dev_dbg(dev->devicep, "%s: zero length pkt received\n",
+				__func__);
+		goto resubmit_int_urb;
+	}
 
 	list_elem = kmalloc(sizeof(struct ctrl_pkt_list_elem), GFP_ATOMIC);
 	if (!list_elem) {
@@ -254,19 +271,29 @@ static void resp_avail_cb(struct urb *urb)
 
 resubmit_int_urb:
 	/*re-submit int urb to check response available*/
+	usb_mark_last_busy(udev);
 	status = usb_submit_urb(dev->inturb, GFP_ATOMIC);
 	if (status)
 		dev_err(dev->devicep, "%s: Error re-submitting Int URB %d\n",
 			__func__, status);
+	pr_info("[CHKRA:%d]>\n", iface_num);
+	usb_mark_last_busy(udev);
+	wake_lock_timeout(&dev->ctrl_wake, msecs_to_jiffies(500));
 }
 
 static int rmnet_usb_ctrl_start_rx(struct rmnet_ctrl_dev *dev)
 {
 	int	retval = 0;
+	unsigned int		iface_num;
+	struct usb_device *udev;
+	iface_num = dev->intf->cur_altsetting->desc.bInterfaceNumber;
 
+	udev = interface_to_usbdev(dev->intf);
+	usb_mark_last_busy(udev);
 	retval = usb_submit_urb(dev->inturb, GFP_KERNEL);
 	if (retval < 0)
 		dev_err(dev->devicep, "%s Intr submit %d\n", __func__, retval);
+	pr_info("[CHKRA:%d]>\n", iface_num);
 
 	return retval;
 }
@@ -339,6 +366,7 @@ static int rmnet_usb_ctrl_write_cmd(struct rmnet_ctrl_dev *dev)
 		return -ENODEV;
 
 	udev = interface_to_usbdev(dev->intf);
+	usb_mark_last_busy(udev);
 	dev->set_ctrl_line_state_cnt++;
 	return usb_control_msg(udev, usb_rcvctrlpipe(udev, 0),
 		USB_CDC_REQ_SET_CONTROL_LINE_STATE,
@@ -376,6 +404,7 @@ static int rmnet_usb_ctrl_write(struct rmnet_ctrl_dev *dev, char *buf,
 		return -ENETRESET;
 
 	udev = interface_to_usbdev(dev->intf);
+	usb_mark_last_busy(udev);
 
 	sndurb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!sndurb) {
@@ -420,6 +449,7 @@ static int rmnet_usb_ctrl_write(struct rmnet_ctrl_dev *dev, char *buf,
 
 	usb_anchor_urb(sndurb, &dev->tx_submitted);
 	dev->snd_encap_cmd_cnt++;
+	usb_mark_last_busy(udev);
 	result = usb_submit_urb(sndurb, GFP_KERNEL);
 	if (result < 0) {
 		dev_err(dev->devicep, "%s: Submit URB error %d\n",
@@ -447,19 +477,11 @@ static int rmnet_ctl_open(struct inode *inode, struct file *file)
 	if (dev->is_opened)
 		goto already_opened;
 
-ctrl_open:
-	if (!is_dev_connected(dev)) {
-		dev_dbg(dev->devicep, "%s: Device not connected\n",
-			__func__);
-		return -ENODEV;
-	}
-
 	/*block open to get first response available from mdm*/
 	if (dev->mdm_wait_timeout && !dev->resp_available) {
 		retval = wait_event_interruptible_timeout(
 					dev->open_wait_queue,
-					dev->resp_available ||
-					!is_dev_connected(dev),
+					dev->resp_available,
 					msecs_to_jiffies(dev->mdm_wait_timeout *
 									1000));
 		if (retval == 0) {
@@ -471,8 +493,6 @@ ctrl_open:
 						__func__, dev->name);
 			return retval;
 		}
-
-		goto ctrl_open;
 	}
 
 	if (!dev->resp_available) {
@@ -799,6 +819,8 @@ int rmnet_usb_ctrl_probe(struct usb_interface *intf,
 			 dev->intbuf, wMaxPacketSize,
 			 notification_available_cb, dev, interval);
 
+	ctl_msg_dbg_mask = MSM_USB_CTL_DUMP_BUFFER;
+
 	return rmnet_usb_ctrl_start_rx(dev);
 }
 
@@ -827,7 +849,7 @@ void rmnet_usb_ctrl_disconnect(struct rmnet_ctrl_dev *dev)
 }
 
 #if defined(CONFIG_DEBUG_FS)
-#define DEBUG_BUF_SIZE	1024
+#define DEBUG_BUF_SIZE	4096
 static ssize_t rmnet_usb_ctrl_read_stats(struct file *file, char __user *ubuf,
 		size_t count, loff_t *ppos)
 {
@@ -856,6 +878,7 @@ static ssize_t rmnet_usb_ctrl_read_stats(struct file *file, char __user *ubuf,
 				"cbits_tolocal:            %d\n"
 				"cbits_tomdm:              %d\n"
 				"mdm_wait_timeout:         %u\n"
+				"zlp_cnt:                  %u\n"
 				"dev opened:               %s\n",
 				dev, dev->name,
 				dev->snd_encap_cmd_cnt,
@@ -866,6 +889,7 @@ static ssize_t rmnet_usb_ctrl_read_stats(struct file *file, char __user *ubuf,
 				dev->cbits_tolocal,
 				dev->cbits_tomdm,
 				dev->mdm_wait_timeout,
+				dev->zlp_cnt,
 				dev->is_opened ? "OPEN" : "CLOSE");
 
 	}
@@ -893,6 +917,7 @@ static ssize_t rmnet_usb_ctrl_reset_stats(struct file *file, const char __user *
 		dev->get_encap_resp_cnt = 0;
 		dev->set_ctrl_line_state_cnt = 0;
 		dev->tx_ctrl_err_cnt = 0;
+		dev->zlp_cnt = 0;
 	}
 	return count;
 }
@@ -949,6 +974,8 @@ int rmnet_usb_ctrl_init(void)
 		init_waitqueue_head(&dev->open_wait_queue);
 		INIT_LIST_HEAD(&dev->rx_list);
 		init_usb_anchor(&dev->tx_submitted);
+
+		wake_lock_init(&dev->ctrl_wake, WAKE_LOCK_SUSPEND, dev->name);
 
 		status = rmnet_usb_ctrl_alloc_rx(dev);
 		if (status < 0) {

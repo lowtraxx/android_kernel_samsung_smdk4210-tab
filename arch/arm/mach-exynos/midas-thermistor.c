@@ -24,6 +24,11 @@
 #include <mach/sec_thermistor.h>
 #endif
 
+#if defined(CONFIG_MACH_C1_KOR_SKT) || defined(CONFIG_MACH_C1_KOR_KT) || \
+	defined(CONFIG_MACH_C1_KOR_LGT)
+extern int siopLevellimit;
+#endif
+
 #ifdef CONFIG_S3C_ADC
 #if defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_P4NOTE)
 static struct adc_table_data ap_adc_temper_table_battery[] = {
@@ -233,13 +238,6 @@ static struct adc_table_data ap_adc_temper_table_battery[] = {
 	{ 1805, -190 },
 	{ 1824, -200 },
 };
-#elif defined(CONFIG_MACH_S2PLUS)
-static struct adc_table_data ap_adc_temper_table_battery[] = {
-	{ 305,  650 },
-	{ 566,  430 },
-	{ 1494,   0 },
-	{ 1571, -50 },
-};
 #else	/* sample */
 static struct adc_table_data ap_adc_temper_table_battery[] = {
 	{ 305,  650 },
@@ -368,24 +366,24 @@ static int get_midas_siop_level(int temp)
 #if defined(CONFIG_MACH_C1_KOR_SKT) || defined(CONFIG_MACH_C1_KOR_KT) || \
 	defined(CONFIG_MACH_C1_KOR_LGT)
 	if (temp > prev_temp) {
-		if (temp >= 490)
+		if (temp >= 540)
 			level = 4;
-		else if (temp >= 480)
+		else if (temp >= 530)
 			level = 3;
-		else if (temp >= 450)
+		else if (temp >= 480)
 			level = 2;
-		else if (temp >= 420)
+		else if (temp >= 440)
 			level = 1;
 		else
 			level = 0;
 	} else {
-		if (temp < 400)
+		if (temp < 410)
 			level = 0;
-		else if (temp < 420)
+		else if (temp < 440)
 			level = 1;
-		else if (temp < 450)
-			level = 2;
 		else if (temp < 480)
+			level = 2;
+		else if (temp < 530)
 			level = 3;
 		else
 			level = 4;
@@ -393,6 +391,10 @@ static int get_midas_siop_level(int temp)
 		if (level > prev_level)
 			level = prev_level;
 	}
+
+	if (siopLevellimit != 0 && level > siopLevellimit)
+		level = siopLevellimit;
+
 #elif defined(CONFIG_MACH_P4NOTE)
 	if (temp > prev_temp) {
 		if (temp >= 620)

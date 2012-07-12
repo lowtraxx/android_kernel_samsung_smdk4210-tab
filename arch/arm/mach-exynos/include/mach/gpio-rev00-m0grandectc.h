@@ -29,6 +29,7 @@ extern void midas_config_sleep_gpio_table(void);
 #define GPIO_VT_CAM_SCL_18V	EXYNOS4212_GPM4(2)
 #define GPIO_VT_CAM_SDA_18V	EXYNOS4212_GPM4(3)
 
+/* Sensors & NFC*/
 #define GPIO_PS_ALS_EN		EXYNOS4212_GPJ0(5)
 #define GPIO_PS_ALS_SDA_28V	EXYNOS4_GPF0(0)
 #define GPIO_PS_ALS_SCL_28V	EXYNOS4_GPF0(1)
@@ -51,6 +52,7 @@ extern void midas_config_sleep_gpio_table(void);
 
 #define GPIO_MIC_BIAS_EN	EXYNOS4_GPF1(7)
 #define GPIO_SUB_MIC_BIAS_EN	EXYNOS4_GPF2(0)
+#define GPIO_AUDIO_PCM_SEL  EXYNOS4_GPF2(3)
 
 #define GPIO_PMU_RST		EXYNOS4_GPX3(2)
 
@@ -147,6 +149,18 @@ extern void midas_config_sleep_gpio_table(void);
 #define GPIO_PMIC_DVS1		EXYNOS4212_GPM3(0)
 #define GPIO_PMIC_DVS2		EXYNOS4212_GPM3(1)
 
+#if defined(CONFIG_REGULATOR_LP8720)
+#define GPIO_FOLDER_PMIC_EN	EXYNOS4_GPL0(4)
+#define GPIO_FOLDER_PMIC_SDA	EXYNOS4_GPF0(4)
+#define GPIO_FOLDER_PMIC_SCL	EXYNOS4_GPF0(6)
+
+#if 0	/* for HW Rev 0.2 */
+#define GPIO_SUB_PMIC_EN	EXYNOS4_GPL0(4)
+#define GPIO_SUB_PMIC_SDA	EXYNOS4_GPF0(7)
+#define GPIO_SUB_PMIC_SCL	EXYNOS4_GPF1(0)
+#endif
+#endif
+
 /* Definitions for Sii 9244B0 */
 #define GPIO_PMIC_DVS3		EXYNOS4212_GPM3(2)
 #define GPIO_BUCK2_SEL		EXYNOS4_GPF3(1)
@@ -170,8 +184,6 @@ extern void midas_config_sleep_gpio_table(void);
 #define GPIO_OK_KEY_ANDROID	EXYNOS4_GPX0(1)		/*system_rev == 11*/
 #define GPIO_OK_KEY_ANDROID_F EXYNOS4_GPX1(3)	/*system_rev >= 15*/
 #define GPIO_FUEL_ALERT		EXYNOS4_GPX2(3)
-
-#define GPIO_WPC_INT		EXYNOS4_GPX3(0)
 
 #define GPIO_VIBTONE_PWM	EXYNOS4_GPD0(1)
 
@@ -209,8 +221,8 @@ extern void midas_config_sleep_gpio_table(void);
 #define GPIO_BOOT_SW_SEL		EXYNOS4_GPF2(5)
 
 /* for revesion 06 higher */
-#define GPIO_USB_BOOT_EN_REV06		EXYNOS4212_GPV3(7)
-#define GPIO_BOOT_SW_SEL_REV06		EXYNOS4212_GPV3(6)
+#define GPIO_USB_BOOT_EN_REV06		EXYNOS4_GPF2(2)
+#define GPIO_BOOT_SW_SEL_REV06		EXYNOS4_GPF2(5)
 
 #define GPIO_IPC_SLAVE_WAKEUP	EXYNOS4_GPX1(0)
 #define GPIO_IPC_HOST_WAKEUP	EXYNOS4_GPX1(1)
@@ -235,7 +247,7 @@ extern void midas_config_sleep_gpio_table(void);
 #define GPIO_ESC_DPRAM_INT		EXYNOS4_GPX1(7)
 #define ESC_DPRAM_INT_IRQ		IRQ_EINT(15)
 
-/* DUMP GPIOS */
+/* DUMMY GPIOS */
 #define GPIO_HDMI_HPD		EXYNOS4_GPA1(4)
 #define GPIO_HDMI_EN		EXYNOS4_GPA1(4)
 #define GPIO_V_BUS_INT		EXYNOS4_GPA1(4)

@@ -38,7 +38,7 @@
 #define IOCTL_MODEM_RESET		_IO('o', 0x21)
 #define IOCTL_MODEM_BOOT_ON		_IO('o', 0x22)
 #define IOCTL_MODEM_BOOT_OFF		_IO('o', 0x23)
-#define IOCTL_MODEM_START		_IO('o', 0x24)
+#define IOCTL_MODEM_BOOT_DONE		_IO('o', 0x24)
 
 #define IOCTL_MODEM_PROTOCOL_SUSPEND	_IO('o', 0x25)
 #define IOCTL_MODEM_PROTOCOL_RESUME	_IO('o', 0x26)
@@ -68,15 +68,9 @@
 #define IOCTL_DPRAM_PHONE_UPLOAD_STEP1	_IO('o', 0xde)
 #define IOCTL_DPRAM_PHONE_UPLOAD_STEP2	_IO('o', 0xdf)
 
-/* ioctl command for ipc dump */
+/* ioctl command for IPC Logger */
 #define IOCTL_MIF_LOG_DUMP		_IO('o', 0x51)
 #define IOCTL_MIF_DPRAM_DUMP		_IO('o', 0x52)
-
-#define MAX_MIF_BUFF_SIZE	0x80000	/* 512kb */
-#define MAX_MIF_IPC_BUFF_SIZE	0x7FF80 /* 512kb - UTC_SIZE */
-#define MAX_MIF_LOG_SIZE	100
-#define MAX_MIF_UTC_SIZE	128
-#define MAX_IPC_SKB_SIZE	4096
 
 /* modem status */
 #define MODEM_OFF		0
@@ -139,6 +133,7 @@ struct dpram_irq_buff {
 	unsigned int2cp;
 };
 
+/* Not use */
 struct mif_event_buff {
 	char time[MAX_MIF_TIME_LEN];
 
@@ -538,8 +533,15 @@ struct modemctl_ops {
 	int (*modem_reset) (struct modem_ctl *);
 	int (*modem_boot_on) (struct modem_ctl *);
 	int (*modem_boot_off) (struct modem_ctl *);
+	int (*modem_boot_done) (struct modem_ctl *);
 	int (*modem_force_crash_exit) (struct modem_ctl *);
 	int (*modem_dump_reset) (struct modem_ctl *);
+};
+
+/* for IPC Logger */
+struct mif_storage {
+	char *addr;
+	unsigned int cnt;
 };
 
 /* modem_shared - shared data for all io/link devices and a modem ctl
@@ -552,12 +554,10 @@ struct modem_shared {
 	/* rb_tree root of io devices. */
 	struct rb_root iodevs_tree_chan; /* group by channel */
 	struct rb_root iodevs_tree_fmt; /* group by dev_format */
-};
 
-struct mif_storage {
-	char *utc_zone;
-	char *addr;
-	unsigned long cnt;
+	/* for IPC Logger */
+	struct mif_storage storage;
+	spinlock_t lock;
 };
 
 struct modem_ctl {
@@ -620,18 +620,10 @@ struct modem_ctl {
 	void (*gpio_revers_bias_restore)(void);
 
 	bool need_switch_to_usb;
-
-	/* for IPC Logger */
-	struct mif_storage storage;
 };
 
 int sipc4_init_io_device(struct io_device *iod);
 int sipc5_init_io_device(struct io_device *iod);
 
 extern void set_sromc_access(bool access);
-
-void mif_log(struct modem_ctl *mc, const char *format, ...);
-void mif_hex_log(struct modem_ctl *mc, const char *data, size_t len);
-int mif_dump_log(struct modem_ctl *mc, struct io_device *iod);
-int mif_dump_dpram(struct modem_ctl *mc, struct io_device *iod);
 #endif

@@ -63,5 +63,10 @@ short tilt_offsetY[MAX_HAND][MAX_ROTATION] = \
 	{{-110, 110, 110, -150, }, {-130, -110, 130, 70, } };
 
 /* Origin Shift */
+#if defined(CONFIG_MACH_Q1_BD)
 short origin_offset[] = {600, 620};
 short origin_offset_48[] = {720, 760};
+#elif defined(CONFIG_MACH_T0)
+short origin_offset[] = {456, 504};
+#endif
+

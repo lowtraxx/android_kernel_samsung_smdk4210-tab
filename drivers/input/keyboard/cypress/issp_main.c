@@ -389,8 +389,8 @@ unsigned int iChecksumTarget;
 #include "touchkey_fw_NA.h"
 #elif defined(CONFIG_TARGET_LOCALE_NAATT)
 #include "touchkey_fw_NAATT.h"
-#elif defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_C1)\
-|| defined(CONFIG_MACH_C1VZW)
+#elif defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_C1) || \
+	defined(CONFIG_MACH_C1VZW) || defined(CONFIG_MACH_C2)
 #include "touchkey_fw_M0.h"
 #else
 #include "touchkey_fw_U1.h"

@@ -42,6 +42,7 @@
 #include "exynos_drm_plane.h"
 #include "exynos_drm_vidi.h"
 #include "exynos_drm_dmabuf.h"
+#include "exynos_drm_iommu.h"
 
 #define DRIVER_NAME	"exynos"
 #define DRIVER_DESC	"Samsung SoC DRM"
@@ -111,6 +112,14 @@ static int exynos_drm_load(struct drm_device *dev, unsigned long flags)
 
 	/* maximum size of userptr is limited to 16MB as default. */
 	private->userptr_limit = SZ_16M;
+
+	/* setup device address space for iommu. */
+	private->vmm = exynos_drm_iommu_setup(0x80000000, 0x40000000);
+	if (IS_ERR(private->vmm)) {
+		DRM_ERROR("failed to setup iommu.\n");
+		kfree(private);
+		return PTR_ERR(private->vmm);
+	}
 
 	INIT_LIST_HEAD(&private->pageflip_event_list);
 	dev->dev_private = (void *)private;
@@ -188,7 +197,14 @@ err_crtc:
 
 static int exynos_drm_unload(struct drm_device *dev)
 {
+	struct exynos_drm_private *private;
+
+	private = dev->dev_private;
+
 	DRM_DEBUG_DRIVER("%s\n", __FILE__);
+
+	/* release vmm object and device address space for iommu. */
+	exynos_drm_iommu_cleanup(private->vmm);
 
 	exynos_drm_fbdev_fini(dev);
 	exynos_drm_device_unregister(dev);
@@ -321,8 +337,8 @@ static const struct file_operations exynos_drm_driver_fops = {
 };
 
 static struct drm_driver exynos_drm_driver = {
-	.driver_features	= DRIVER_HAVE_IRQ | DRIVER_BUS_PLATFORM |
-				  DRIVER_MODESET | DRIVER_GEM | DRIVER_PRIME,
+	.driver_features	= DRIVER_HAVE_IRQ | DRIVER_MODESET |
+					DRIVER_GEM | DRIVER_PRIME,
 	.load			= exynos_drm_load,
 	.unload			= exynos_drm_unload,
 	.open			= exynos_drm_open,
@@ -427,6 +443,12 @@ static int __init exynos_drm_init(void)
 		goto out_fimc;
 #endif
 
+#ifdef CONFIG_DRM_EXYNOS_GSC
+	ret = platform_driver_register(&gsc_driver);
+	if (ret < 0)
+		goto out_gsc;
+#endif
+
 	ret = platform_driver_register(&exynos_drm_platform_driver);
 	if (ret < 0)
 		goto out;
@@ -434,6 +456,11 @@ static int __init exynos_drm_init(void)
 	return 0;
 
 out:
+#ifdef CONFIG_DRM_EXYNOS_GSC
+	platform_driver_unregister(&gsc_driver);
+out_gsc:
+#endif
+
 #ifdef CONFIG_DRM_EXYNOS_FIMC
 	platform_driver_unregister(&fimc_driver);
 out_fimc:
@@ -475,6 +502,10 @@ static void __exit exynos_drm_exit(void)
 	DRM_DEBUG_DRIVER("%s\n", __FILE__);
 
 	platform_driver_unregister(&exynos_drm_platform_driver);
+
+#ifdef CONFIG_DRM_EXYNOS_GSC
+	platform_driver_unregister(&gsc_driver);
+#endif
 
 #ifdef CONFIG_DRM_EXYNOS_FIMC
 	platform_driver_unregister(&fimc_driver);

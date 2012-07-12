@@ -80,10 +80,12 @@ extern int s3c_gpio_slp_setpull_updown(unsigned int pin, unsigned int config);
 #define GPIO_TF_EN		EXYNOS4_GPY2(0)
 
 #define GPIO_DET_35		EXYNOS4_GPX0(1)
+#define GPIO_EAR_SEND_END	EXYNOS4_GPX3(6)
 
 #define GPIO_MIC_BIAS_EN	EXYNOS4_GPF1(7)
 #define GPIO_SUB_MIC_BIAS_EN	EXYNOS4_GPF2(0)
 #define GPIO_THIRD_MIC_BIAS_EN	EXYNOS4212_GPJ0(2)
+#define GPIO_EAR_MIC_BIAS_EN	EXYNOS4212_GPJ0(3)
 
 #define GPIO_PMU_RST		EXYNOS4_GPX3(2)
 

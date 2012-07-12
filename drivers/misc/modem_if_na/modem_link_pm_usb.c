@@ -50,11 +50,6 @@ bool link_pm_is_connected(struct usb_link_device *usb_ld)
 			return false;
 		}
 	}
-#else
-	if (usb_ld->link_pm_data->dpm_suspending) {
-		mif_info("not ready due to suspending\n");
-		return false;
-	}
 #endif
 	if (!usb_ld->if_usb_connected) {
 		mif_err("if not connected\n");
@@ -187,7 +182,10 @@ static long link_pm_ioctl(struct file *file, unsigned int cmd,
 						unsigned long arg)
 {
 	int value, err = 0;
+	struct task_struct *task = get_current();
 	struct link_pm_data *pm_data = file->private_data;
+	struct usb_link_device *usb_ld = pm_data->usb_ld;
+	char taskname[TASK_COMM_LEN];
 
 	mif_info("cmd: 0x%08x\n", cmd);
 
@@ -228,6 +226,13 @@ static long link_pm_ioctl(struct file *file, unsigned int cmd,
 		pm_data->hub_init_lock = 1;
 		pm_data->hub_handshake_done = 0;
 
+		break;
+	case IOCTL_LINK_BLOCK_AUTOSUSPEND: /* block autosuspend forever */
+				mif_info("blocked autosuspend by `%s(%d)'\n",
+				get_task_comm(taskname, task), task->pid);
+				pm_data->block_autosuspend = true;
+				if (usb_ld->usbdev)
+					pm_runtime_forbid(&usb_ld->usbdev->dev);
 		break;
 	default:
 		break;
@@ -298,6 +303,7 @@ int link_pm_init(struct usb_link_device *usb_ld, void *data)
 	pm_data->cpufreq_lock = pm_pdata->cpufreq_lock;
 	pm_data->cpufreq_unlock = pm_pdata->cpufreq_unlock;
 	pm_data->autosuspend_delay_ms = pm_pdata->autosuspend_delay_ms;
+	pm_data->block_autosuspend = false;
 
 	pm_data->usb_ld = usb_ld;
 	pm_data->link_pm_active = false;

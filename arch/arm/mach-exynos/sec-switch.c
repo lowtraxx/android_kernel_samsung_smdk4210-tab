@@ -207,9 +207,11 @@ static int __init midas_sec_switch_init(void)
 
 int max77693_muic_charger_cb(enum cable_type_muic cable_type)
 {
+#if !defined(USE_CHGIN_INTR)
 #ifdef CONFIG_BATTERY_MAX77693_CHARGER
 	struct power_supply *psy = power_supply_get_by_name("max77693-charger");
 	union power_supply_propval value;
+#endif
 #endif
 	pr_info("%s: %d\n", __func__, cable_type);
 
@@ -240,6 +242,7 @@ int max77693_muic_charger_cb(enum cable_type_muic cable_type)
 		return -EINVAL;
 	}
 
+#if !defined(USE_CHGIN_INTR)
 #ifdef CONFIG_BATTERY_MAX77693_CHARGER
 	if (!psy) {
 		pr_err("%s: fail to get max77693-charger psy\n", __func__);
@@ -249,9 +252,10 @@ int max77693_muic_charger_cb(enum cable_type_muic cable_type)
 	value.intval = cable_type;
 	psy->set_property(psy, POWER_SUPPLY_PROP_ONLINE, &value);
 #endif
+#endif
 
 #if defined(CONFIG_MACH_SLP_NAPLES) || defined(CONFIG_MACH_MIDAS) \
-		|| defined(CONFIG_MACH_GC1)
+		|| defined(CONFIG_MACH_GC1) || defined(CONFIG_MACH_T0)
 	tsp_charger_infom(is_cable_attached);
 #endif
 #ifdef CONFIG_JACK_MON
@@ -358,6 +362,7 @@ void max77693_muic_usb_cb(u8 usb_mode)
 #endif
 }
 
+#if !defined(CONFIG_MUIC_MAX77693_SEPARATE_MHL_PORT)
 /*extern void MHL_On(bool on);*/
 void max77693_muic_mhl_cb(int attached)
 {
@@ -382,7 +387,9 @@ void max77693_muic_mhl_cb(int attached)
 #endif
 	}
 }
+#endif /* !CONFIG_MUIC_MAX77693_SEPARATE_MHL_PORT */
 
+#if !defined(CONFIG_MUIC_MAX77693_SEPARATE_MHL_PORT)
 bool max77693_muic_is_mhl_attached(void)
 {
 	int val;
@@ -405,6 +412,7 @@ bool max77693_muic_is_mhl_attached(void)
 	return !!val;
 #endif
 }
+#endif /* !CONFIG_MUIC_MAX77693_SEPARATE_MHL_PORT */
 
 void max77693_muic_deskdock_cb(bool attached)
 {
@@ -452,7 +460,8 @@ void max77693_muic_init_cb(void)
 		pr_err("Failed to register dock switch. %d\n", ret);
 }
 
-#if !defined(CONFIG_MACH_GC1) && !defined(CONFIG_MACH_T0)
+#if !defined(CONFIG_MACH_GC1) && !defined(CONFIG_MACH_T0) && \
+  !defined(CONFIG_MACH_C2)
 int max77693_muic_cfg_uart_gpio(void)
 {
 	int uart_val, path;
@@ -471,7 +480,8 @@ int max77693_muic_cfg_uart_gpio(void)
 }
 #endif
 
-#if !defined(CONFIG_MACH_GC1) && !defined(CONFIG_MACH_T0)
+#if !defined(CONFIG_MACH_GC1) && !defined(CONFIG_MACH_T0) && \
+  !defined(CONFIG_MACH_C2)
 void max77693_muic_jig_uart_cb(int path)
 {
 	pr_info("func:%s : (path=%d\n", __func__, path);
@@ -560,13 +570,16 @@ int max77693_muic_set_safeout(int path)
 struct max77693_muic_data max77693_muic = {
 	.usb_cb = max77693_muic_usb_cb,
 	.charger_cb = max77693_muic_charger_cb,
+#if !defined(CONFIG_MUIC_MAX77693_SEPARATE_MHL_PORT)
 	.mhl_cb = max77693_muic_mhl_cb,
 	.is_mhl_attached = max77693_muic_is_mhl_attached,
+#endif
 	.set_safeout = max77693_muic_set_safeout,
 	.init_cb = max77693_muic_init_cb,
 	.deskdock_cb = max77693_muic_deskdock_cb,
 	.cardock_cb = max77693_muic_cardock_cb,
-#if !defined(CONFIG_MACH_GC1) && !defined(CONFIG_MACH_T0)
+#if !defined(CONFIG_MACH_GC1) && !defined(CONFIG_MACH_T0) && \
+  !defined(CONFIG_MACH_C2)
 	.cfg_uart_gpio = max77693_muic_cfg_uart_gpio,
 	.jig_uart_cb = max77693_muic_jig_uart_cb,
 #endif /* CONFIG_MACH_GC1 */
@@ -575,12 +588,39 @@ struct max77693_muic_data max77693_muic = {
 #else
 	.host_notify_cb = NULL,
 #endif
-#if !defined(CONFIG_MACH_GC1) && !defined(CONFIG_MACH_T0)
+#if !defined(CONFIG_MACH_GC1) && !defined(CONFIG_MACH_T0) && \
+  !defined(CONFIG_MACH_C2)
 	.gpio_usb_sel = GPIO_USB_SEL,
 #else
 	.gpio_usb_sel = -1,
 #endif /* CONFIG_MACH_GC1 */
 	.jig_state = max77693_set_jig_state,
 };
+
+#if defined(CONFIG_MACH_SLP_PQ) ||  defined(CONFIG_MACH_REDWOOD)
+static void otg_accessory_power(int enable)
+{
+	u8 on = (u8)!!enable;
+
+	/* max77693 otg power control */
+	otg_control(enable);
+
+	gpio_request(GPIO_OTG_EN, "USB_OTG_EN");
+	gpio_direction_output(GPIO_OTG_EN, on);
+	gpio_free(GPIO_OTG_EN);
+	pr_info("%s: otg accessory power = %d\n", __func__, on);
+}
+
+static struct host_notifier_platform_data host_notifier_pdata = {
+	.ndev.name	= "usb_otg",
+	.booster	= otg_accessory_power,
+	.thread_enable	= 0,
+};
+
+struct platform_device host_notifier_device = {
+	.name = "host_notifier",
+	.dev.platform_data = &host_notifier_pdata,
+};
+#endif
 
 device_initcall(midas_sec_switch_init);

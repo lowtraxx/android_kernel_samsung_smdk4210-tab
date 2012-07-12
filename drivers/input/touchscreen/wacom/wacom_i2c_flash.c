@@ -416,6 +416,11 @@ int wacom_i2c_flash(struct wacom_i2c *wac_i2c)
 	int ret = 0, blver = 0, mcu = 0;
 	u32 max_addr = 0, cmd_addr = 0;
 
+	if (Binary == NULL) {
+		printk(KERN_ERR"[E-PEN] Data is NULL. Exit.\n");
+		return -1;
+	}
+
 	wake_lock(&wac_i2c->wakelock);
 
 	ret = wacom_i2c_flash_cmd(wac_i2c);
@@ -452,6 +457,13 @@ int wacom_i2c_flash(struct wacom_i2c *wac_i2c)
 		printk(KERN_DEBUG "[E-PEN]: Flashing for 514 started\n");
 		max_addr = MAX_ADDR_514;
 		cmd_addr = MAX_BLOCK_514;
+		fw_update_enable = true;
+		break;
+
+	case MPUVER_505:
+		printk(KERN_DEBUG "[E-PEN]: Flashing for 505 started\n");
+		max_addr = MAX_ADDR_505;
+		cmd_addr = MAX_BLOCK_505;
 		fw_update_enable = true;
 		break;
 

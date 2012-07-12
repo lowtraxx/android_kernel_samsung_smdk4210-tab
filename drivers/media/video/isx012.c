@@ -255,13 +255,16 @@ static void msleep_debug(u32 msecs, bool dbg_on)
 {
 	u32 delta_halfrange; /* in us unit */
 
+	if (unlikely(!msecs))
+		return;
+
 	if (dbg_on)
 		cam_dbg("delay for %dms\n", msecs);
 
-	if (msecs <= 5)
+	if (msecs <= 7)
 		delta_halfrange = 100;
 	else
-		delta_halfrange = 500;
+		delta_halfrange = 300;
 
 	if (msecs <= 20)
 		usleep_range((msecs * 1000 - delta_halfrange),
@@ -709,7 +712,7 @@ static int isx012_i2c_read(struct v4l2_subdev *sd,
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	u8 buf[16] = {0,};
 	struct i2c_msg msg[2];
-	int err, retry = 3;
+	int err, retry = 5;
 
 
 	if (unlikely(!client->adapter)) {
@@ -743,7 +746,7 @@ static int isx012_i2c_read(struct v4l2_subdev *sd,
 		msleep_debug(POLL_TIME_MS, false);
 	} while (retry-- > 0);
 
-	CHECK_ERR_COND_MSG(err != 2, -EIO, "I2C does not working\n");
+	CHECK_ERR_COND_MSG(err != 2, -EIO, "I2C does not work\n");
 
 #ifdef CONFIG_CAM_I2C_LITTLE_ENDIAN
 	if (len == 1)
@@ -838,7 +841,7 @@ static int isx012_i2c_write(struct v4l2_subdev *sd,
 		msleep_debug(POLL_TIME_MS, false);
 	} while (retry_count-- > 0);
 
-	CHECK_ERR_COND_MSG(err != 1, -EIO, "I2C does not working\n");
+	CHECK_ERR_COND_MSG(err != 1, -EIO, "I2C does not work\n");
 	return 0;
 }
 
@@ -994,8 +997,7 @@ static int isx012_is_om_changed(struct v4l2_subdev *sd)
 
 	for (cnt1 = 0; cnt1 < ISX012_CNT_OM_CHECK; cnt1++) {
 		err = isx012_readb(sd, REG_INTSTS, &val);
-		if (unlikely(err))
-			cam_err("om changed: error, readb cnt=%d\n", cnt1);
+		CHECK_ERR_MSG(err, "om changed: error, readb cnt=%d\n", cnt1);
 
 		if ((val & REG_INTBIT_OM) == REG_INTBIT_OM) {
 			status &= ~0x01;
@@ -1007,8 +1009,7 @@ static int isx012_is_om_changed(struct v4l2_subdev *sd)
 	for (cnt2 = 0; cnt2 < ISX012_CNT_OM_CHECK; cnt2++) {
 		err = isx012_writeb(sd, REG_INTCLR, REG_INTBIT_OM);
 		err |= isx012_readb(sd, REG_INTSTS, &val);
-		if (unlikely(err))
-			cam_err("om changed: error, rw cnt=%d\n", cnt2);
+		CHECK_ERR_MSG(err, "om changed: clear error, rw\n");
 
 		if ((val & REG_INTBIT_OM) == 0) {
 			status &= ~0x02;
@@ -1017,12 +1018,12 @@ static int isx012_is_om_changed(struct v4l2_subdev *sd)
 		msleep_debug(5, false);
 	}
 
-	cam_dbg("om changed: sucess. int cnt=%d, clr cnt=%d\n", cnt1, cnt2);
-
 	if (unlikely(status)) {
 		cam_err("om changed: error, fail 0x%X\n", status);
 		return -EAGAIN;
 	}
+
+	cam_dbg("om changed: int cnt=%d, clr cnt=%d\n", cnt1, cnt2);
 
 	return 0;
 }
@@ -1051,8 +1052,9 @@ static int isx012_is_cm_changed(struct v4l2_subdev *sd)
 
 	for (cnt2 = 0; cnt2 < ISX012_CNT_CM_CHECK; cnt2++) {
 		err = isx012_writeb(sd, REG_INTCLR, REG_INTBIT_CM);
-		CHECK_ERR_MSG(err, "cm changed: error, writeb\n");
-		isx012_readb(sd, REG_INTSTS, &val);
+		err |= isx012_readb(sd, REG_INTSTS, &val);
+		CHECK_ERR_MSG(err, "cm changed: clear error, rw\n");
+
 		if ((val & REG_INTBIT_CM) == 0) {
 			status &= ~0x02;
 			break;
@@ -1061,12 +1063,12 @@ static int isx012_is_cm_changed(struct v4l2_subdev *sd)
 		msleep_debug(5, false);
 	}
 
-	cam_dbg("cm changed: int cnt=%d, clr cnt=%d\n", cnt1, cnt2);
-
 	if (unlikely(status)) {
 		cam_err("cm changed: error, fail 0x%X\n", status);
 		return -EAGAIN;
 	}
+
+	cam_dbg("cm changed: int cnt=%d, clr cnt=%d\n", cnt1, cnt2);
 
 	return 0;
 }
@@ -1075,12 +1077,6 @@ static inline int isx012_transit_preview_mode(struct v4l2_subdev *sd)
 {
 	struct isx012_state *state = to_state(sd);
 	int err = -EIO;
-
-	if (state->scene_mode == SCENE_MODE_NIGHTSHOT) {
-		cam_info("stop: NIGHT mode\n");
-		state->pdata->streamoff_delay = 167;
-	} else
-		state->pdata->streamoff_delay = 150; /* 66 */
 
 	err = isx012_set_from_table(sd, "preview_mode",
 		&state->regs->preview_mode, 1, 0);
@@ -1121,15 +1117,8 @@ static inline int isx012_transit_capture_mode(struct v4l2_subdev *sd)
 	struct isx012_state *state = to_state(sd);
 	int err = -EIO;
 
-	if (state->scene_mode == SCENE_MODE_NIGHTSHOT) {
-		cam_info("stop: NIGHT mode\n");
-		state->pdata->streamoff_delay = 510; /* 501ms */
-	} else
-		state->pdata->streamoff_delay = 150;
-
 	if (state->lowlux_night) {
 		cam_info("capture_mode: night lowlux\n");
-		state->lowlux_night = 0;
 		err = isx012_set_from_table(sd, "capture_mode_night",
 			&state->regs->capture_mode_night, 1, 0);
 	} else
@@ -1289,7 +1278,7 @@ static void isx012_frame_checker(struct work_struct *work)
 
 		if (((u8)val & ISX012_INTSRC_VINT) == ISX012_INTSRC_VINT) {
 			++int_cnt;
-			cam_info("frame INT %d (cnt=%d)\n", int_cnt, cnt);
+			cam_info("frame_INT %d (cnt=%d)\n", int_cnt, cnt);
 			if (int_cnt >= 2) {
 				state->frame_check = false;
 				return;
@@ -1308,7 +1297,7 @@ static void isx012_frame_checker(struct work_struct *work)
 			return;
 		}
 
-		msleep_debug(10, false);
+		msleep_debug(3, false);
 	}
 
 	cam_err("frame INT Not occured!\n");
@@ -1567,9 +1556,19 @@ static int isx012_set_exposure(struct v4l2_subdev *sd, s32 val)
 static inline u32 isx012_get_light_level(struct v4l2_subdev *sd,
 					u32 *light_level)
 {
-	isx012_readb(sd, REG_USER_GAINLEVEL_NOW, light_level);
+	struct isx012_state *state = to_state(sd);
+	u32 val_lsb = 0, val_msb = 0;
 
-	cam_trace("X, light level = 0x%X", *light_level);
+	if (state->iso == ISO_AUTO)
+		isx012_readb(sd, REG_USER_GAINLEVEL_NOW, light_level);
+	else {
+		isx012_readw(sd, REG_SHT_TIME_OUT_L, &val_lsb);
+		isx012_readw(sd, REG_SHT_TIME_OUT_H, &val_msb);
+
+		*light_level = (val_msb << 16) | (val_lsb & 0xFFFF);
+	}
+
+	cam_trace("X, iso = %d, light level = 0x%X", state->iso, *light_level);
 
 	return 0;
 }
@@ -1583,7 +1582,7 @@ static int isx012_set_capture_size(struct v4l2_subdev *sd)
 		cam_warn("warning, capture resolution not set\n");
 		state->capture = isx012_get_framesize(isx012_capture_frmsizes,
 					ARRAY_SIZE(isx012_capture_frmsizes),
-					CAPTURE_SZ_3MP);
+					CAPTURE_SZ_5MP);
 	}
 
 	cam_dbg("set capture size(%dx%d)\n",
@@ -1940,11 +1939,13 @@ static int isx012_af_start_preflash(struct v4l2_subdev *sd, u32 touch)
 
 	switch (state->flash_mode) {
 	case FLASH_MODE_AUTO:
-		if (state->light_level < state->lux_level_flash) {
-			/* flash not needed */
-			break;
-		}
+		if (state->iso == ISO_AUTO) {
+			if (state->light_level < state->lux_level_flash)
+				break;
+		} else if (state->light_level < state->shutter_level_flash)
+				break;
 
+		/* Do not break */
 	case FLASH_MODE_ON:
 		flash = true;
 		state->focus.preflash = PREFLASH_ON;
@@ -2034,7 +2035,7 @@ static int isx012_do_af(struct v4l2_subdev *sd, u32 touch)
 	if (state->sensor_mode == SENSOR_MOVIE) {
 		isx012_set_from_table(sd, "af_camcorder_start",
 			&state->regs->af_camcorder_start, 1, 0);
-	} else
+	} else if (!flash)
 		isx012_transit_half_mode(sd);
 
 	/* Check the result of AF */
@@ -2082,7 +2083,9 @@ check_fail:
 		isx012_set_from_table(sd, "af_saf_off",
 			&state->regs->af_saf_off, 1, 0);
 
-	msleep_debug(66, true); /* Wait 1V time(66ms) */
+	/* Remove the exising below 66ms delay:
+	 * many delays have been added to _saf_off recently*/
+	/* msleep_debug(66, true);*/ /* Wait 1V time(66ms) */
 	if (state->focus.start == AUTO_FOCUS_OFF) {
 		cam_dbg("do_af: AF is cancelled\n");
 		state->focus.status = AF_RESULT_CANCELLED;
@@ -2460,7 +2463,9 @@ static int isx012_init_regs(struct v4l2_subdev *sd)
 }
 #endif
 
-static int isx012_wait_steamoff(struct v4l2_subdev *sd)
+static int isx012_set_capture(struct v4l2_subdev *sd);
+
+static inline int isx012_do_wait_steamoff(struct v4l2_subdev *sd)
 {
 	struct isx012_state *state = to_state(sd);
 	struct isx012_stream_time *stream_time = &state->stream_time;
@@ -2470,15 +2475,11 @@ static int isx012_wait_steamoff(struct v4l2_subdev *sd)
 
 	cam_trace("E\n");
 
-	if (unlikely(!(state->pdata->is_mipi & state->need_wait_streamoff)))
-		return 0;
-
 	do_gettimeofday(&stream_time->curr_time);
 
 	elapsed_msec = GET_ELAPSED_TIME(stream_time->curr_time, \
 				stream_time->before_time) / 1000;
 
-#ifdef CONFIG_NEW_STREAMOFF_DEALY
 	for (count = 0; count < ISX012_CNT_STREAMOFF; count++) {
 		err = isx012_readb(sd, 0x00DC, &val);
 		CHECK_ERR_MSG(err, "wait_steamoff: error, readb\n")
@@ -2495,17 +2496,52 @@ static int isx012_wait_steamoff(struct v4l2_subdev *sd)
 
 	if (unlikely(count >= ISX012_CNT_STREAMOFF))
 		cam_info("wait_steamoff: time-out!\n\n");
-#else
-	if (state->pdata->streamoff_delay > elapsed_msec) {
-		cam_info("stream-off: %dms + %dms\n", elapsed_msec,
-			state->pdata->streamoff_delay - elapsed_msec);
-		msleep_debug(state->pdata->streamoff_delay - elapsed_msec,
-			true);
-	} else
-		cam_info("stream-off: %dms\n", elapsed_msec);
-#endif
 
 	state->need_wait_streamoff = 0;
+
+	return 0;
+}
+
+static inline int isx012_fast_capture_switch(struct v4l2_subdev *sd)
+{
+	u32 val = 0;
+	int err = 0, count;
+
+	cam_trace("EX\n");
+
+	for (count = 0; count < ISX012_CNT_STREAMOFF; count++) {
+		err = isx012_readb(sd, 0x00DC, &val);
+		CHECK_ERR_MSG(err, "fast_capture_switch: error, readb\n")
+
+		if ((val & 0x03) == 0x02) {
+			cam_info("fast_capture_switch: cnt(%d)\n", count);
+			break;
+		}
+
+		/* cam_info("wait_steamoff: val = 0x%X\n", val);*/
+		msleep_debug(2, false);
+	}
+
+	if (unlikely(count >= ISX012_CNT_STREAMOFF))
+		cam_info("fast_capture_switch: time-out!\n\n");
+
+	return 0;
+}
+
+static int isx012_wait_steamoff(struct v4l2_subdev *sd)
+{
+	struct isx012_state *state = to_state(sd);
+
+	if (unlikely(!state->pdata->is_mipi))
+		return 0;
+
+	if (state->need_wait_streamoff) {
+		isx012_do_wait_steamoff(sd);
+		state->need_wait_streamoff = 0;
+	} else if (state->format_mode == V4L2_PIX_FMT_MODE_CAPTURE)
+		isx012_fast_capture_switch(sd);
+
+	cam_trace("EX\n");
 
 	return 0;
 }
@@ -2515,17 +2551,24 @@ static int isx012_control_stream(struct v4l2_subdev *sd, u32 cmd)
 	struct isx012_state *state = to_state(sd);
 
 	if (cmd == STREAM_STOP) {
-		isx012_writeb(sd, 0x00BF, 0x01);
+#if !defined(CONFIG_VIDEO_IMPROVE_STREAMOFF)
+		state->cap_prereq = 0;
+#endif
+		if (!((state->runmode == RUNMODE_RUNNING)
+		    && state->cap_prereq)) {
+			isx012_writeb(sd, 0x00BF, 0x01);
+			state->need_wait_streamoff = 1;
+			cam_info("STREAM STOP\n");
+		}
+
 #ifdef CONFIG_DEBUG_NO_FRAME
 		isx012_stop_frame_checker(sd);
 #endif
-#ifdef CONFIG_VIDEO_IMPROVE_STREAMOFF
 		do_gettimeofday(&state->stream_time.before_time);
-		state->need_wait_streamoff = 1;
-#else
-		msleep_debug(state->pdata->streamoff_delay, true);
+
+#if !defined(CONFIG_VIDEO_IMPROVE_STREAMOFF)
+		isx012_wait_steamoff(sd);
 #endif
-		cam_info("STREAM STOP\n");
 	} else {
 		isx012_writeb(sd, 0x00BF, 0x00);
 		cam_info("STREAM START\n");
@@ -2536,6 +2579,8 @@ static int isx012_control_stream(struct v4l2_subdev *sd, u32 cmd)
 	case RUNMODE_CAPTURING:
 		cam_dbg("Capture Stop!\n");
 		state->runmode = RUNMODE_CAPTURING_STOP;
+		state->cap_ready = 0;
+		state->lowlux_night = 0;
 
 		/* We turn flash off if one shot flash is still on. */
 		if (isx012_is_hwflash_on(sd))
@@ -2548,6 +2593,11 @@ static int isx012_control_stream(struct v4l2_subdev *sd, u32 cmd)
 	case RUNMODE_RUNNING:
 		cam_dbg("Preview Stop!\n");
 		state->runmode = RUNMODE_RUNNING_STOP;
+
+		if (state->cap_prereq) {
+			isx012_set_capture(sd);
+			state->cap_prereq = 0;
+		}
 		break;
 
 	case RUNMODE_RECORDING:
@@ -2642,9 +2692,16 @@ retry:
 	switch (val) {
 	case ISO_AUTO:
 	case ISO_50:
+		state->shutter_level_flash = 0xB52A;
+
 	case ISO_100:
+		state->shutter_level_flash = 0x9DBA;
+
 	case ISO_200:
+		state->shutter_level_flash = 0x864A;
+
 	case ISO_400:
+		state->shutter_level_flash = 0x738A;
 		isx012_set_from_table(sd, "iso",
 			state->regs->iso, ARRAY_SIZE(state->regs->iso),
 			val);
@@ -2656,6 +2713,8 @@ retry:
 		goto retry;
 		break;
 	}
+
+	state->iso = val;
 
 	cam_trace("X\n");
 	return 0;
@@ -2679,6 +2738,8 @@ static inline void isx012_get_exif_flash(struct v4l2_subdev *sd,
 					u16 *flash)
 {
 	struct isx012_state *state = to_state(sd);
+
+	*flash = 0;
 
 	switch (state->flash_mode) {
 	case FLASH_MODE_OFF:
@@ -2809,36 +2870,56 @@ static int isx012_start_preview(struct v4l2_subdev *sd)
 	return 0;
 }
 
-static int isx012_start_video_preview(struct v4l2_subdev *sd)
+static int isx012_set_capture(struct v4l2_subdev *sd)
 {
 	struct isx012_state *state = to_state(sd);
-	int err = -EINVAL;
+	int err = 0;
 
-	cam_dbg("Video Preview start, runmode = %d (Not Implemented)\n",
-		state->runmode);
-	return err;
-}
+	cam_trace("EX\n");
 
-static int isx012_start_capture(struct v4l2_subdev *sd)
-{
-	struct isx012_state *state = to_state(sd);
-	int err = -ENODEV, count;
-	u32 lux = 0, val = 0;
-
-	cam_trace("E\n");
+	state->req_fmt.width = (state->cap_prereq >> 16);
+	state->req_fmt.height = (state->cap_prereq & 0xFFFF);
+	isx012_set_framesize(sd, isx012_capture_frmsizes,
+		ARRAY_SIZE(isx012_capture_frmsizes), false);
 
 	/* Set capture size */
 	err = isx012_set_capture_size(sd);
 	CHECK_ERR_MSG(err, "fail to set capture size (%d)\n", err);
 
-	if (state->focus.ae_manual_mode) {
-		state->focus.ae_manual_mode = 0;
-		isx012_writeb(sd, REG_AE_SN1, 0x02);
-		isx012_writeb(sd, REG_AE_SN4, 0x02);
-		isx012_writeb(sd, REG_AE_SN7, 0x02);
-		isx012_writeb(sd, REG_AE_SN11, 0x02);
+	/* Transit to capture mode */
+	err = isx012_transit_capture_mode(sd);
+	CHECK_ERR_MSG(err, "fail to capture_mode (%d)\n", err);
 
-		msleep_debug(66, true); /* Wait 1v time(66ms) */
+	state->cap_ready = 1;
+
+	return 0;
+}
+
+static int isx012_start_capture(struct v4l2_subdev *sd, u32 capture_ready)
+{
+	struct isx012_state *state = to_state(sd);
+	int err = -ENODEV, count;
+	u32 lux = 0, val = 0;
+	u32 night_delay;
+
+	cam_trace("E\n");
+
+	state->cap_prereq = 0;
+
+	if (!capture_ready) {
+		/* Set capture size */
+		err = isx012_set_capture_size(sd);
+		CHECK_ERR_MSG(err, "fail to set capture size (%d)\n", err);
+
+		if (state->focus.ae_manual_mode) {
+			state->focus.ae_manual_mode = 0;
+			isx012_writeb(sd, REG_AE_SN1, 0x02);
+			isx012_writeb(sd, REG_AE_SN4, 0x02);
+			isx012_writeb(sd, REG_AE_SN7, 0x02);
+			isx012_writeb(sd, REG_AE_SN11, 0x02);
+
+			msleep_debug(66, true); /* Wait 1v time(66ms) */
+		}
 	}
 
 	/* Set flash */
@@ -2870,19 +2951,24 @@ static int isx012_start_capture(struct v4l2_subdev *sd)
 	 * Refer to comments of above switch() statements */
 
 	/* Transit to capture mode */
-	err = isx012_transit_capture_mode(sd);
-	CHECK_ERR_MSG(err, "fail to capture_mode (%d)\n", err);
+	if (!capture_ready) {
+		err = isx012_transit_capture_mode(sd);
+		CHECK_ERR_MSG(err, "fail to capture_mode (%d)\n", err);
 
-	err = isx012_is_cm_changed(sd);
-	CHECK_ERR(err);
+		err = isx012_is_cm_changed(sd);
+		CHECK_ERR(err);
 
-	isx012_control_stream(sd, STREAM_START);
+		isx012_control_stream(sd, STREAM_START);
+		night_delay = 500;
+	} else
+		night_delay = 700; /* for completely skipping 1 frame. */
 
 #ifdef CONFIG_DEBUG_NO_FRAME
 	isx012_start_frame_checker(sd);
 #endif
 
-	if (state->focus.preflash == PREFLASH_ON) {
+	if ((state->focus.preflash == PREFLASH_ON) &&
+	    (state->wb.mode == WHITE_BALANCE_AUTO)) {
 		msleep_debug(210, true);
 		for (count = 0; count < ISX012_CNT_CAPTURE_AWB; count++) {
 			isx012_readb(sd, REG_AWBSTS, &val);
@@ -2895,6 +2981,9 @@ static int isx012_start_capture(struct v4l2_subdev *sd)
 	}
 
 	state->runmode = RUNMODE_CAPTURING;
+
+	if (state->lowlux_night)
+		msleep_debug(night_delay, true);
 
 	/* Get EXIF */
 	isx012_get_exif(sd);
@@ -3235,6 +3324,15 @@ static int isx012_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 		err = isx012_set_iso(sd, ctrl->value);
 		break;
 
+	case V4L2_CID_CAMERA_CAPTURE_MODE:
+		state->cap_prereq = ctrl->value;
+		err = 0;
+		break;
+
+	case V4L2_CID_CAMERA_ANTI_BANDING:
+		err = 0;
+		break;
+
 	case V4L2_CID_CAMERA_FRAME_RATE:
 	default:
 		cam_err("%s: WARNING, unknown Ctrl-ID 0x%x\n",
@@ -3293,7 +3391,8 @@ static int isx012_s_stream(struct v4l2_subdev *sd, int enable)
 		switch (state->sensor_mode) {
 		case SENSOR_CAMERA:
 			if (state->format_mode == V4L2_PIX_FMT_MODE_CAPTURE)
-				err = isx012_start_capture(sd);
+				err = isx012_start_capture(sd,
+					state->cap_ready);
 			else
 				err = isx012_start_preview(sd);
 			break;
@@ -3529,6 +3628,7 @@ static void isx012_init_parameter(struct v4l2_subdev *sd)
 	state->frame_check = false;
 #endif
 	state->lux_level_flash = LUX_LEVEL_FLASH_ON;
+	state->shutter_level_flash = 0x0;
 
 #ifdef CONFIG_LOAD_FILE
 	state->exposure.ae_offset.ae_ofsetval =
@@ -3546,7 +3646,7 @@ static int isx012_init(struct v4l2_subdev *sd, u32 val)
 	struct isx012_state *state = to_state(sd);
 	int err = -EINVAL;
 
-	cam_dbg("init: start v06(%s)\n", __DATE__);
+	cam_dbg("init: start v07(%s)\n", __DATE__);
 
 #ifdef CONFIG_LOAD_FILE
 	err = isx012_regs_table_init();

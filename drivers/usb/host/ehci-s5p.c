@@ -24,6 +24,16 @@
 #include <mach/regs-usb-host.h>
 #include <mach/board_rev.h>
 
+#ifdef CONFIG_MDM_HSIC_PM
+#include <linux/mdm_hsic_pm.h>
+static const char hsic_pm_dev[] = "mdm_hsic_pm0";
+#endif
+
+#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB)
+#include <linux/cpu.h>
+#include <mach/sec_modem.h>
+#endif
+
 struct s5p_ehci_hcd {
 	struct device *dev;
 	struct usb_hcd *hcd;
@@ -87,7 +97,7 @@ static int s5p_ehci_configurate(struct usb_hcd *hcd)
 }
 
 #if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB) ||\
-	defined(CONFIG_CDMA_MODEM_MDM6600)
+	defined(CONFIG_CDMA_MODEM_MDM6600) || defined(CONFIG_MDM_HSIC_PM)
 #ifdef CONFIG_MACH_P8LTE
 #define CP_PORT		 1  /* HSIC0 in S5PC210 */
 #else
@@ -109,7 +119,10 @@ int s5p_ehci_port_control(struct platform_device *pdev, int port, int enable)
 	ehci_readl(ehci, &ehci->regs->command);
 	return 0;
 }
+#endif
 
+#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB) \
+		|| defined(CONFIG_MDM_HSIC_PM)
 static void s5p_wait_for_cp_resume(struct platform_device *pdev,
 	struct usb_hcd *hcd)
 {
@@ -118,11 +131,17 @@ static void s5p_wait_for_cp_resume(struct platform_device *pdev,
 	u32 __iomem	*portsc ;
 	u32 val32, retry_cnt = 0;
 
+#if !defined(CONFIG_MDM_HSIC_PM)
+	/* when use usb3503 hub, need not wait cp resume */
+	if (modem_using_hub())
+		return;
+#endif
 	portsc = &ehci->regs->port_status[CP_PORT-1];
 
+#if !defined(CONFIG_MDM_HSIC_PM)
 	if (pdata && pdata->noti_host_states)
 		pdata->noti_host_states(pdev, S5P_HOST_ON);
-
+#endif
 	do {
 		msleep(10);
 		val32 = ehci_readl(ehci, portsc);
@@ -175,6 +194,20 @@ static int s5p_ehci_suspend(struct device *dev)
 	struct ehci_hcd *ehci = hcd_to_ehci(hcd);
 	unsigned long flags;
 	int rc = 0;
+
+#ifdef CONFIG_MDM_HSIC_PM
+	if (check_udev_suspend_allowed(hsic_pm_dev) > 0) {
+		set_host_stat(hsic_pm_dev, POWER_OFF);
+		if (wait_dev_pwr_stat(hsic_pm_dev, POWER_OFF) < 0) {
+			set_host_stat(hsic_pm_dev, POWER_ON);
+			pm_runtime_resume(&pdev->dev);
+			return -EBUSY;
+		}
+	} else {
+		pm_runtime_resume(&pdev->dev);
+		return -EBUSY;
+	}
+#endif
 
 	if (time_before(jiffies, ehci->next_statechange))
 		msleep(10);
@@ -265,9 +298,12 @@ static int s5p_ehci_resume(struct device *dev)
 	ehci_port_power(ehci, 1);
 
 	hcd->state = HC_STATE_SUSPENDED;
-#if defined(CONFIG_LINK_DEVICE_HSIC) || \
-		(defined(CONFIG_LINK_DEVICE_USB) && \
-		!defined(CONFIG_USBHUB_USB3503))
+#ifdef CONFIG_MDM_HSIC_PM
+	set_host_stat(hsic_pm_dev, POWER_ON);
+	wait_dev_pwr_stat(hsic_pm_dev, POWER_ON);
+#endif
+#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB) \
+		|| defined(CONFIG_MDM_HSIC_PM)
 	s5p_wait_for_cp_resume(pdev, hcd);
 #endif
 	return 0;
@@ -286,7 +322,9 @@ static int s5p_ehci_runtime_suspend(struct device *dev)
 
 	if (pdata && pdata->phy_suspend)
 		pdata->phy_suspend(pdev, S5P_USB_PHY_HOST);
-
+#ifdef CONFIG_MDM_HSIC_PM
+	request_active_lock_release(hsic_pm_dev);
+#endif
 	return 0;
 }
 
@@ -302,6 +340,9 @@ static int s5p_ehci_runtime_resume(struct device *dev)
 	if (dev->power.is_suspended)
 		return 0;
 
+#ifdef CONFIG_MDM_HSIC_PM
+	request_active_lock_set(hsic_pm_dev);
+#endif
 	/* platform device isn't suspended */
 	if (pdata && pdata->phy_resume)
 		rc = pdata->phy_resume(pdev, S5P_USB_PHY_HOST);
@@ -326,9 +367,12 @@ static int s5p_ehci_runtime_resume(struct device *dev)
 		ehci_port_power(ehci, 1);
 
 		hcd->state = HC_STATE_SUSPENDED;
-#if defined(CONFIG_LINK_DEVICE_HSIC) || \
-		(defined(CONFIG_LINK_DEVICE_USB) && \
-		!defined(CONFIG_USBHUB_USB3503))
+#ifdef CONFIG_MDM_HSIC_PM
+		set_host_stat(hsic_pm_dev, POWER_ON);
+		wait_dev_pwr_stat(hsic_pm_dev, POWER_ON);
+#endif
+#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB) \
+		|| defined(CONFIG_MDM_HSIC_PM)
 		s5p_wait_for_cp_resume(pdev, hcd);
 #endif
 	}
@@ -505,6 +549,50 @@ static inline void remove_ehci_sys_file(struct ehci_hcd *ehci)
 #endif
 }
 
+#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB)
+static int s5p_ehci_irq_no = 0;
+static int s5p_ehci_irq_cpu = 0;
+
+/* total cpu core numbers to irq cpu (cpu0 is default)
+ * 1 (single): cpu0
+ * 2 (dual)  : cpu1
+ * 3         : cpu1
+ * 4 (quad)  : cpu3
+ */
+static int s5p_ehci_cpus[] = {0, 1, 1, 3};
+
+static int __cpuinit s5p_ehci_cpu_notify(struct notifier_block *self,
+				unsigned long action, void *hcpu)
+{
+	int cpu = (unsigned long)hcpu;
+
+	if (!s5p_ehci_irq_no || cpu != s5p_ehci_irq_cpu)
+		goto exit;
+
+	switch (action) {
+	case CPU_ONLINE:
+	case CPU_DOWN_FAILED:
+	case CPU_ONLINE_FROZEN:
+		irq_set_affinity(s5p_ehci_irq_no, cpumask_of(s5p_ehci_irq_cpu));
+		pr_debug("%s: set ehci irq to cpu%d\n", __func__, cpu);
+		break;
+	case CPU_DOWN_PREPARE:
+	case CPU_DOWN_PREPARE_FROZEN:
+		irq_set_affinity(s5p_ehci_irq_no, cpumask_of(0));
+		pr_debug("%s: set ehci irq to cpu%d\n", __func__, 0);
+		break;
+	default:
+		break;
+	}
+exit:
+	return NOTIFY_OK;
+}
+
+static struct notifier_block __cpuinitdata s5p_ehci_cpu_notifier = {
+	.notifier_call = s5p_ehci_cpu_notify,
+};
+#endif
+
 static int __devinit s5p_ehci_probe(struct platform_device *pdev)
 {
 	struct s5p_ehci_platdata *pdata;
@@ -598,7 +686,24 @@ static int __devinit s5p_ehci_probe(struct platform_device *pdev)
 	pm_runtime_set_active(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
 #endif
+#ifdef CONFIG_MDM_HSIC_PM
+/*
+	set_host_stat(hsic_pm_dev, POWER_ON);
+*/
+	pm_runtime_allow(&pdev->dev);
+	pm_runtime_set_autosuspend_delay(&hcd->self.root_hub->dev, 0);
+
+	pm_runtime_forbid(&pdev->dev);
+	enable_periodic(ehci);
+#endif
 #if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB)
+	if (num_possible_cpus() > 1) {
+		s5p_ehci_irq_no = irq;
+		s5p_ehci_irq_cpu = s5p_ehci_cpus[num_possible_cpus() - 1];
+		irq_set_affinity(s5p_ehci_irq_no, cpumask_of(s5p_ehci_irq_cpu));
+		register_cpu_notifier(&s5p_ehci_cpu_notifier);
+	}
+
 	/* for cp enumeration */
 	pm_runtime_forbid(&pdev->dev);
 	/*HSIC IPC control the ACTIVE_STATE*/
@@ -627,14 +732,29 @@ static int __devexit s5p_ehci_remove(struct platform_device *pdev)
 	struct s5p_ehci_hcd *s5p_ehci = platform_get_drvdata(pdev);
 	struct usb_hcd *hcd = s5p_ehci->hcd;
 
+/* pm_runtime_disable called twice during pdev unregistering
+ * it causes disable_depth mismatching, so rpm for this device
+ * cannot works from disable_depth count
+ * replace it to runtime forbid.
+ */
 #ifdef CONFIG_USB_SUSPEND
+#ifdef CONFIG_MDM_HSIC_PM
+	pm_runtime_forbid(&pdev->dev);
+#else
 	pm_runtime_disable(&pdev->dev);
+#endif
 #endif
 	s5p_ehci->power_on = 0;
 	remove_ehci_sys_file(hcd_to_ehci(hcd));
 	usb_remove_hcd(hcd);
 
 #if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB)
+	if (num_possible_cpus() > 1) {
+		s5p_ehci_irq_no = 0;
+		s5p_ehci_irq_cpu = 0;
+		unregister_cpu_notifier(&s5p_ehci_cpu_notifier);
+	}
+
 	/*HSIC IPC control the ACTIVE_STATE*/
 	if (pdata && pdata->noti_host_states)
 		pdata->noti_host_states(pdev, S5P_HOST_OFF);

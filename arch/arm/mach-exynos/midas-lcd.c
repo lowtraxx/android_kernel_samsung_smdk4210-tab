@@ -232,11 +232,7 @@ static struct lcd_platform_data ld9040_platform_data = {
 	.gpio_cfg_earlysuspend = lcd_gpio_cfg_earlysuspend,
 	.gpio_cfg_lateresume = lcd_gpio_cfg_lateresume,
 		 /* it indicates whether lcd panel is enabled from u-boot. */
-#if defined(CONFIG_MACH_S2PLUS)
-	.lcd_enabled = 1,
-#else
 	.lcd_enabled = 0,
-#endif
 	.reset_delay = 20,  /* 20ms */
 	.power_on_delay = 20,	 /* 20ms */
 	.power_off_delay = 200, /* 200ms */
@@ -467,9 +463,14 @@ static struct platform_device s3c_device_spi_gpio = {
 /* for Geminus based on MIPI-DSI interface */
 static struct s3cfb_lcd s6e8aa0 = {
 	.name = "s6e8aa0",
-	.width = 720,
 	.height = 1280,
+#if defined(CONFIG_S6E8AA0_AMS529HA01)
+	.width = 800,
+	.p_width = 64,
+#else
+	.width = 720,
 	.p_width = 60,		/* 59.76 mm */
+#endif
 	.p_height = 106,	 /* 106.24 mm */
 	.bpp = 24,
 
@@ -504,6 +505,48 @@ static struct s3cfb_lcd s6e8aa0 = {
 	},
 };
 #endif
+
+#ifdef CONFIG_FB_S5P_EA8061
+/* for Geminus based on MIPI-DSI interface */
+static struct s3cfb_lcd ea8061 = {
+	.name = "ea8061",
+	.height = 1280,
+	.width = 720,
+	.p_width = 64,
+	.p_height = 106,	 /* 106.24 mm */
+	.bpp = 24,
+	.freq = 60,
+
+	/* minumun value is 0 except for wr_act time. */
+	.cpu_timing = {
+		.cs_setup = 0,
+		.wr_setup = 0,
+		.wr_act = 1,
+		.wr_hold = 0,
+	},
+
+	.timing = {
+		.h_fp = 26,
+		.h_bp = 150,
+		.h_sw = 4,
+		.v_fp = 13,
+		.v_fpe = 1,
+		.v_bp = 1,
+		.v_bpe = 1,
+		.v_sw = 2,
+		.cmd_allow_len = 11,	 /* v_fp=stable_vfp + cmd_allow_len */
+		.stable_vfp = 2,
+	},
+
+	.polarity = {
+		.rise_vclk = 1,
+		.inv_hsync = 0,
+		.inv_vsync = 0,
+		.inv_vden = 0,
+	},
+};
+#endif
+
 
 #ifdef CONFIG_FB_S5P_S6E63M0
 /* for Geminus based on MIPI-DSI interface */
@@ -687,6 +730,14 @@ static int lcd_power_on(void *ld, int enable)
 	if (enable) {
 		gpio_set_value(GPIO_LCD_22V_EN_00, GPIO_LEVEL_HIGH);
 
+#if defined(CONFIG_MACH_T0) && defined(CONFIG_REGULATOR_S5M8767)
+		regulator = regulator_get(NULL, "vcc_1.8v_lcd");
+		if (IS_ERR(regulator))
+			goto out;
+		regulator_enable(regulator);
+		regulator_put(regulator);
+#endif
+
 		regulator = regulator_get(NULL, "vlcd_3.3v");
 		if (IS_ERR(regulator))
 			goto out;
@@ -699,6 +750,15 @@ static int lcd_power_on(void *ld, int enable)
 		if (regulator_is_enabled(regulator))
 			regulator_force_disable(regulator);
 		regulator_put(regulator);
+
+#if defined(CONFIG_MACH_T0) && defined(CONFIG_REGULATOR_S5M8767)
+		regulator = regulator_get(NULL, "vcc_1.8v_lcd");
+		if (IS_ERR(regulator))
+			goto out;
+		if (regulator_is_enabled(regulator))
+			regulator_force_disable(regulator);
+		regulator_put(regulator);
+#endif
 		gpio_set_value(GPIO_LCD_22V_EN_00, GPIO_LEVEL_LOW);
 		gpio_set_value(GPIO_MLCD_RST, 0);
 	}
@@ -708,6 +768,7 @@ out:
 	gpio_free(GPIO_MLCD_RST);
 	gpio_free(GPIO_LCD_22V_EN_00);
 return 0;
+
 }
 
 static void s5p_dsim_mipi_power_control(int enable)
@@ -769,9 +830,6 @@ void __init mipi_fb_init(void)
 	printk(KERN_INFO "%s :: fb_platform_data.hw_ver = 0x%x\n",
 		__func__, fb_platform_data.hw_ver);
 
-	fb_platform_data.mipi_is_enabled = 1;
-	fb_platform_data.interface_mode = FIMD_CPU_INTERFACE;
-
 	dsim_pd = (struct s5p_platform_dsim *)
 		s5p_device_dsim.dev.platform_data;
 
@@ -783,6 +841,11 @@ void __init mipi_fb_init(void)
 #if defined(CONFIG_FB_S5P_S6E8AA0)
 	dsim_lcd_info->lcd_panel_info = (void *)&s6e8aa0;
 #endif
+
+#if defined(CONFIG_FB_S5P_EA8061)
+	dsim_lcd_info->lcd_panel_info = (void *)&ea8061;
+#endif
+
 #if defined(CONFIG_FB_S5P_S6D6AA1)
 	dsim_lcd_info->lcd_panel_info = (void *)&s6d6aa1;
 #endif
@@ -841,6 +904,9 @@ struct s3c_platform_fb fb_platform_data __initdata = {
 #if defined(CONFIG_FB_S5P_S6D6AA1)
 	.lcd		= &s6d6aa1
 #endif
+#if defined(CONFIG_FB_S5P_EA8061)
+	.lcd		= &ea8061
+#endif
 };
 
 #ifdef CONFIG_FB_S5P_MDNIE
@@ -850,6 +916,13 @@ static struct platform_mdnie_data mdnie_data = {
 	.lcd_pd		= &s6c1372_platform_data,
 #endif
 };
+#endif
+
+#if defined(CONFIG_FB_S5P_S6C1372)
+void check_lcd_type(void)
+{
+	mdnie_data.display_type = lcdtype;
+}
 #endif
 
 struct platform_device mdnie_device = {

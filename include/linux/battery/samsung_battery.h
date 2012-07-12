@@ -122,10 +122,12 @@ struct battery_info {
 
 	/* event sceanario */
 	unsigned int event_state;
+	unsigned int event_type;
 
 	/* time management */
 	unsigned int charge_start_time;
-	struct alarm	alarm;
+	struct alarm	monitor_alarm;
+	struct alarm	event_alarm;
 	bool		slow_poll;
 	ktime_t		last_poll;
 
@@ -152,6 +154,13 @@ struct battery_info {
 
 /* jig state */
 extern bool is_jig_attached;
+
+/* charger detect source */
+#if defined(CONFIG_MACH_M0) || defined(CONFIG_TARGET_LOCALE_KOR)
+#undef USE_CHGIN_INTR
+#else
+#define USE_CHGIN_INTR
+#endif
 
 /*
  * Use for charger
@@ -298,6 +307,14 @@ enum event_type {
 	EVENT_TYPE_LTE,
 	EVENT_TYPE_WIFI,
 	EVENT_TYPE_USE,
+
+	EVENT_TYPE_MAX,
+};
+
+enum event_state {
+	EVENT_STATE_CLEAR = 0,
+	EVENT_STATE_IN_TIMER,
+	EVENT_STATE_SET,
 };
 
 /**
@@ -335,6 +352,7 @@ struct samsung_battery_platform_data {
 	/* Recharge sceanario */
 	unsigned int recharge_voltage;
 	unsigned int abstimer_charge_duration;
+	unsigned int abstimer_charge_duration_wpc;
 	unsigned int abstimer_recharge_duration;
 
 	/* cable detect */
@@ -351,10 +369,18 @@ struct samsung_battery_platform_data {
 	/* CTIA spec */
 	bool ctia_spec;
 
+	/* event sceanario */
+	unsigned int event_time;
+
 	/* CTIA temperature */
-	int event_state;
 	int event_overheat_stop_temp;
+	int event_overheat_recovery_temp;
+	int event_freeze_stop_temp;
+	int event_freeze_recovery_temp;
 	int lpm_overheat_stop_temp;
+	int lpm_overheat_recovery_temp;
+	int lpm_freeze_stop_temp;
+	int lpm_freeze_recovery_temp;
 
 	/* Temperature source 0: fuelgauge, 1: ap adc, 2: ex. adc */
 	int temper_src;

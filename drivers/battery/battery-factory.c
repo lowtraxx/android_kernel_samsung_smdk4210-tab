@@ -129,8 +129,8 @@ static ssize_t factory_show_property(struct device *dev,
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", val);
 		break;
 	case BATT_READ_ADJ_SOC:
-		battery_get_info(info, POWER_SUPPLY_PROP_CAPACITY);
-		val = info->battery_soc;
+		val = info->battery_soc =
+			battery_get_info(info, POWER_SUPPLY_PROP_CAPACITY);
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", val);
 		break;
 	case BATT_TYPE:
@@ -194,8 +194,8 @@ static ssize_t factory_show_property(struct device *dev,
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", val);
 		break;
 	case BATT_CHARGING_SOURCE:
-		battery_get_info(info, POWER_SUPPLY_PROP_ONLINE);
-		val = info->cable_type;
+		val = info->cable_type =
+			battery_get_info(info, POWER_SUPPLY_PROP_ONLINE);
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", val);
 		break;
 	case TEST_MODE:
@@ -273,6 +273,9 @@ static ssize_t factory_store_property(struct device *dev,
 				battery_control_info(info,
 						POWER_SUPPLY_PROP_CAPACITY,
 						1);
+				info->battery_soc =
+						battery_get_info(info,
+						POWER_SUPPLY_PROP_CAPACITY);
 			} else
 				pr_info("%s: Not supported param.\n", __func__);
 			ret = count;
@@ -367,7 +370,8 @@ static ssize_t ctia_show_property(struct device *dev,
 	const ptrdiff_t off = attr - ctia_attrs;
 	pr_info("%s: %s\n", __func__, ctia_attrs[off].attr.name);
 
-	i += scnprintf(buf + i, PAGE_SIZE - i, "0x%04x\n", info->event_state);
+	i += scnprintf(buf + i, PAGE_SIZE - i, "%d 0x%04x\n",
+				info->event_state, info->event_type);
 
 	return i;
 }
@@ -384,21 +388,21 @@ static ssize_t ctia_store_property(struct device *dev,
 
 	if (sscanf(buf, "%d\n", &x) == 1) {
 		if (x == 1) {
-			info->event_state |= (1 << off);
+			info->event_type |= (1 << off);
 			pr_info("%s: set case #%d, event(0x%04x)\n",
-				__func__, off, info->event_state);
+				__func__, off, info->event_type);
 		} else if (x == 0) {
-			info->event_state &= ~(1 << off);
+			info->event_type &= ~(1 << off);
 			pr_info("%s: clear case #%d, event(0x%04x)\n",
-				__func__, off, info->event_state);
+				__func__, off, info->event_type);
 		} else {
 			pr_info("%s: invalid case #%d, event(0x%04x)\n",
-				__func__, off, info->event_state);
+				__func__, off, info->event_type);
 		}
 		ret = count;
 	}
 
-	schedule_work(&info->monitor_work);
+	battery_event_control(info);
 
 	return ret;
 }

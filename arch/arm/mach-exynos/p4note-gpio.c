@@ -309,7 +309,7 @@ static unsigned int p4note_sleep_gpio_table[][3] = {
 	{EXYNOS4_GPL2(1),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
 	{EXYNOS4_GPL2(2),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
 	{EXYNOS4_GPL2(3),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN},
-#if defined(CONFIG_MACH_C1) || defined(CONFIG_MACH_C1VZW)
+#if defined(CONFIG_MACH_C1) || defined(CONFIG_MACH_C1VZW) || defined(CONFIG_MACH_C2)
 	/* GLP2(4) CMC_CPU_RESET, hold high */
 	{EXYNOS4_GPL2(4),  S3C_GPIO_SLP_OUT1, S3C_GPIO_PULL_NONE}, /* NC */
 #else

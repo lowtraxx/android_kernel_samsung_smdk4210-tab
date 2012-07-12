@@ -669,6 +669,18 @@ static void cmd_phone_start_handler(struct dpram_link_device *dpld)
 	dpram_init_and_report(dpld);
 }
 
+static void cmd_nv_rebuild_handler(struct dpram_link_device *dpld)
+{
+		struct io_device *iod = dpram_find_iod(dpld, FMT_IDX);
+
+		mif_info("MIF: Received nv rebuilding from modem\n");
+		mif_info("MIF: %s\n", dpld->dpram->fmt_in_buff);
+
+		if (iod && iod->modem_state_changed)
+			iod->modem_state_changed(iod, STATE_NV_REBUILDING);
+}
+
+
 static void command_handler(struct dpram_link_device *dpld, u16 cmd)
 {
 	mif_debug("MIF: %s: %x\n", __func__, cmd);
@@ -688,6 +700,7 @@ static void command_handler(struct dpram_link_device *dpld, u16 cmd)
 
 	case INT_CMD_NV_REBUILDING:
 		mif_err("[MODEM_IF] NV_REBUILDING\n");
+		cmd_nv_rebuild_handler(dpld);
 		break;
 
 	case INT_CMD_PIF_INIT_DONE:

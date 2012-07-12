@@ -128,6 +128,7 @@ static struct usb_driver qcdriver = {
 	.id_table		= id_table,
 	.suspend		= usb_serial_suspend,
 	.resume			= usb_serial_resume,
+	.reset_resume		= usb_serial_resume,
 	.supports_autosuspend	= true,
 };
 
@@ -154,9 +155,14 @@ static int qcprobe(struct usb_serial *serial, const struct usb_device_id *id)
 		return -ENOMEM;
 
 	spin_lock_init(&data->susp_lock);
-
+#ifdef CONFIG_MDM_HSIC_PM
+	if (id->idVendor == 0x05c6 &&
+			(id->idProduct == 0x9008 || id->idProduct == 0x9048 ||
+					id->idProduct == 0x904c))
+		goto set_interface;
 	usb_enable_autosuspend(serial->dev);
-
+set_interface:
+#endif
 	switch (nintf) {
 	case 1:
 		/* QDL mode */

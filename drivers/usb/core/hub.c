@@ -766,7 +766,16 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 							"under this hub\n.");
 				}
 			}
+			#ifdef CONFIG_MDM_HSIC_PM
+			/* MDM9x15, HSIC device do not need power on delay */
+			if (dev_name(hub->intfdev) &&
+				!strcmp(dev_name(hub->intfdev), "2-0:1.0"))
+				hub_power_on(hub, false);
+			else
+				hub_power_on(hub, true);
+			#else
 			hub_power_on(hub, true);
+			#endif
 		} else {
 			hub_power_on(hub, true);
 		}
@@ -879,7 +888,8 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 	 * If any port-status changes do occur during this delay, khubd
 	 * will see them later and handle them normally.
 	 */
-#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB)
+#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB) \
+					|| defined(CONFIG_MDM_HSIC_PM)
 	if (need_debounce_delay && type != HUB_RESET_RESUME) {
 #else
 	if (need_debounce_delay) {
@@ -2133,7 +2143,13 @@ static int hub_port_reset(struct usb_hub *hub, int port1,
 		switch (status) {
 		case 0:
 			/* TRSTRCY = 10 ms; plus some extra */
+			#ifdef CONFIG_MDM_HSIC_PM
+			/* MDM9x15, HSIC deivce do not need this delay */
+			if (!(udev->quirks & USB_QUIRK_HSIC_TUNE))
+				msleep(10 + 40);
+			#else
 			msleep(10 + 40);
+			#endif
 			update_devnum(udev, 0);
 			if (hcd->driver->reset_device) {
 				status = hcd->driver->reset_device(hcd, udev);
@@ -2568,7 +2584,8 @@ int usb_port_resume(struct usb_device *udev, pm_message_t msg)
 	}
 
  SuspendCleared:
-#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB)
+#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB) \
+					|| defined(CONFIG_MDM_HSIC_PM)
 	pr_info("mif: %s: %d, %d\n", __func__, portstatus, portchange);
 #endif
 	if (status == 0) {

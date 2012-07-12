@@ -1,4 +1,4 @@
-/* linux/arch/arm/mach-xxxx/board-c1ctc-modems.c
+/* linux/arch/arm/mach-xxxx/board-m0ctc-modems.c
  * Copyright (C) 2010 Samsung Electronics. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
@@ -122,14 +122,14 @@ static struct sromc_cfg msm_edpram_cfg = {
 
 static struct sromc_access_cfg msm_edpram_access_cfg[] = {
 	[DPRAM_SPEED_LOW] = {
-			     .tacs = 0x2 << 28,
-			     .tcos = 0x2 << 24,
-			     .tacc = 0x3 << 16,
-			     .tcoh = 0x2 << 12,
-			     .tcah = 0x2 << 8,
-			     .tacp = 0x2 << 4,
-			     .pmc = 0x0 << 0,
-			     },
+		.tacs = 0x2 << 28,
+		.tcos = 0x2 << 24,
+		.tacc = 0x3 << 16,
+		.tcoh = 0x2 << 12,
+		.tcah = 0x2 << 8,
+		.tacp = 0x2 << 4,
+		.pmc = 0x0 << 0,
+	},
 };
 
 /*
@@ -186,21 +186,7 @@ struct msm_edpram_ipc_cfg {
 	u16 mbx_cp2ap;
 };
 
-struct msm_edpram_boot_map {
-	u8 __iomem *buff;
-	u16 __iomem *frame_size;
-	u16 __iomem *tag;
-	u16 __iomem *count;
-};
-
 static struct dpram_ipc_map msm_ipc_map;
-
-struct _param_nv {
-	unsigned char *addr;
-	unsigned int size;
-	unsigned int count;
-	unsigned int tag;
-};
 
 #if (MSM_EDPRAM_SIZE == 0x4000)
 /*
@@ -222,8 +208,8 @@ CP -> AP Intr : 2Byte
 */
 #define DP_BOOT_CLEAR_OFFSET	4
 #define DP_BOOT_RSRVD_OFFSET	0x3C00
-#define DP_BOOT_SIZE_OFFSET	    0x3FF6
-#define DP_BOOT_TAG_OFFSET	    0x3FF8
+#define DP_BOOT_SIZE_OFFSET	0x3FF6
+#define DP_BOOT_TAG_OFFSET	0x3FF8
 #define DP_BOOT_COUNT_OFFSET	0x3FFA
 
 #define DP_BOOT_FRAME_SIZE_LIMIT     0x3C00	/* 15KB = 15360byte = 0x3C00 */
@@ -247,61 +233,16 @@ CP -> AP Intr : 2Byte
 */
 #define DP_BOOT_CLEAR_OFFSET	4
 #define DP_BOOT_RSRVD_OFFSET	0x7C00
-#define DP_BOOT_SIZE_OFFSET	    0x7FF6
-#define DP_BOOT_TAG_OFFSET	    0x7FF8
+#define DP_BOOT_SIZE_OFFSET	0x7FF6
+#define DP_BOOT_TAG_OFFSET	0x7FF8
 #define DP_BOOT_COUNT_OFFSET	0x7FFA
 
 #define DP_BOOT_FRAME_SIZE_LIMIT     0x7C00	/* 31KB = 31744byte = 0x7C00 */
 #endif
 
-struct _param_check {
-	unsigned int total_size;
-	unsigned int rest_size;
-	unsigned int send_size;
-	unsigned int copy_start;
-	unsigned int copy_complete;
-	unsigned int boot_complete;
-};
-
-static struct _param_nv *data_param;
-static struct _param_check check_param;
-
-static unsigned int boot_start_complete;
-static struct msm_edpram_boot_map msm_edpram_bt_map;
 static struct dpram_ipc_map msm_ipc_map;
 
-static unsigned char *img;
-static unsigned char *nv_img;
-
-static void msm_log_disp(struct modemlink_dpram_control *dpctl);
-static int msm_uload_step1(struct modemlink_dpram_control *dpctl);
-static int msm_uload_step2(void *arg, struct modemlink_dpram_control *dpctl);
-static int msm_dload_prep(struct modemlink_dpram_control *dpctl);
-static int msm_dload(void *arg, struct modemlink_dpram_control *dpctl);
-static int msm_nv_load(void *arg, struct modemlink_dpram_control *dpctl);
-static int msm_boot_start(struct modemlink_dpram_control *dpctl);
-static int msm_boot_start_post_proc(void);
-static void msm_boot_start_handler(struct modemlink_dpram_control *dpctl);
-static void msm_dload_handler(struct modemlink_dpram_control *dpctl, u16 cmd);
-static void msm_bt_map_init(struct modemlink_dpram_control *dpctl);
-static void msm_load_init(struct modemlink_dpram_control *dpctl);
-static void msm_terminate_link(struct modemlink_dpram_control *dpctl);
-
 static struct modemlink_dpram_control msm_edpram_ctrl = {
-	.log_disp = msm_log_disp,
-	.cpupload_step1 = msm_uload_step1,
-	.cpupload_step2 = msm_uload_step2,
-	.cpimage_load = msm_dload,
-	.nvdata_load = msm_nv_load,
-	.phone_boot_start = msm_boot_start,
-	.dload_cmd_hdlr = msm_dload_handler,
-	.bt_map_init = msm_bt_map_init,
-	.load_init = msm_load_init,
-	.cpimage_load_prepare = msm_dload_prep,
-	.phone_boot_start_post_process = msm_boot_start_post_proc,
-	.phone_boot_start_handler = msm_boot_start_handler,
-	.terminate_link = msm_terminate_link,
-
 	.dp_type = EXT_DPRAM,
 
 	.dpram_irq = MSM_DPRAM_INT_IRQ,
@@ -309,6 +250,11 @@ static struct modemlink_dpram_control msm_edpram_ctrl = {
 
 	.max_ipc_dev = IPC_RFS,
 	.ipc_map = &msm_ipc_map,
+
+	.boot_size_offset = DP_BOOT_SIZE_OFFSET,
+	.boot_tag_offset = DP_BOOT_TAG_OFFSET,
+	.boot_count_offset = DP_BOOT_COUNT_OFFSET,
+	.max_boot_frame_size = DP_BOOT_FRAME_SIZE_LIMIT,
 };
 
 /*
@@ -316,152 +262,152 @@ static struct modemlink_dpram_control msm_edpram_ctrl = {
 */
 static struct modem_io_t cdma_io_devices[] = {
 	[0] = {
-	       .name = "cdma_boot0",
-	       .id = 0x1,
-	       .format = IPC_BOOT,
-	       .io_type = IODEV_MISC,
-	       .links = LINKTYPE(LINKDEV_DPRAM),
-	       },
+		.name = "cdma_boot0",
+		.id = 0x1,
+		.format = IPC_BOOT,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
 	[1] = {
-	       .name = "cdma_ramdump0",
-	       .id = 0x1,
-	       .format = IPC_RAMDUMP,
-	       .io_type = IODEV_MISC,
-	       .links = LINKTYPE(LINKDEV_DPRAM),
-	       },
+		.name = "cdma_ramdump0",
+		.id = 0x1,
+		.format = IPC_RAMDUMP,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
 	[2] = {
-	       .name = "umts_ipc0",
-	       .id = 0x01,
-	       .format = IPC_FMT,
-	       .io_type = IODEV_MISC,
-	       .links = LINKTYPE(LINKDEV_DPRAM),
-	       },
+		.name = "umts_ipc0",
+		.id = 0x01,
+		.format = IPC_FMT,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
 	[3] = {
-	       .name = "cdma_ipc0",
-	       .id = 0x00,
-	       .format = IPC_FMT,
-	       .io_type = IODEV_MISC,
-	       .links = LINKTYPE(LINKDEV_DPRAM),
-	       },
+		.name = "cdma_ipc0",
+		.id = 0x00,
+		.format = IPC_FMT,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
 	[4] = {
-	       .name = "multi_pdp",
-	       .id = 0x1,
-	       .format = IPC_MULTI_RAW,
-	       .io_type = IODEV_DUMMY,
-	       .links = LINKTYPE(LINKDEV_DPRAM),
-	       },
+		.name = "multi_pdp",
+		.id = 0x1,
+		.format = IPC_MULTI_RAW,
+		.io_type = IODEV_DUMMY,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
 	[5] = {
-	       .name = "cdma_CSD",
-	       .id = (1 | 0x20),
-	       .format = IPC_RAW,
-	       .io_type = IODEV_MISC,
-	       .links = LINKTYPE(LINKDEV_DPRAM),
-	       },
+		.name = "cdma_CSD",
+		.id = (1 | 0x20),
+		.format = IPC_RAW,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
 	[6] = {
-	       .name = "cdma_FOTA",
-	       .id = (2 | 0x20),
-	       .format = IPC_RAW,
-	       .io_type = IODEV_MISC,
-	       .links = LINKTYPE(LINKDEV_DPRAM),
-	       },
+		.name = "cdma_FOTA",
+		.id = (2 | 0x20),
+		.format = IPC_RAW,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
 	[7] = {
-	       .name = "cdma_GPS",
-	       .id = (5 | 0x20),
-	       .format = IPC_RAW,
-	       .io_type = IODEV_MISC,
-	       .links = LINKTYPE(LINKDEV_DPRAM),
-	       },
+		.name = "cdma_GPS",
+		.id = (5 | 0x20),
+		.format = IPC_RAW,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
 	[8] = {
-	       .name = "cdma_XTRA",
-	       .id = (6 | 0x20),
-	       .format = IPC_RAW,
-	       .io_type = IODEV_MISC,
-	       .links = LINKTYPE(LINKDEV_DPRAM),
-	       },
+		.name = "cdma_XTRA",
+		.id = (6 | 0x20),
+		.format = IPC_RAW,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
 	[9] = {
-	       .name = "cdma_CDMA",
-	       .id = (7 | 0x20),
-	       .format = IPC_RAW,
-	       .io_type = IODEV_MISC,
-	       .links = LINKTYPE(LINKDEV_DPRAM),
-	       },
+		.name = "cdma_CDMA",
+		.id = (7 | 0x20),
+		.format = IPC_RAW,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
 	[10] = {
 		.name = "cdma_EFS",
 		.id = (8 | 0x20),
 		.format = IPC_RAW,
 		.io_type = IODEV_MISC,
 		.links = LINKTYPE(LINKDEV_DPRAM),
-		},
+	},
 	[11] = {
 		.name = "cdma_TRFB",
 		.id = (9 | 0x20),
 		.format = IPC_RAW,
 		.io_type = IODEV_MISC,
 		.links = LINKTYPE(LINKDEV_DPRAM),
-		},
+	},
 	[12] = {
 		.name = "rmnet0",
 		.id = 0x2A,
 		.format = IPC_RAW,
 		.io_type = IODEV_NET,
 		.links = LINKTYPE(LINKDEV_DPRAM),
-		},
+	},
 	[13] = {
 		.name = "rmnet1",
 		.id = 0x2B,
 		.format = IPC_RAW,
 		.io_type = IODEV_NET,
 		.links = LINKTYPE(LINKDEV_DPRAM),
-		},
+	},
 	[14] = {
 		.name = "rmnet2",
 		.id = 0x2C,
 		.format = IPC_RAW,
 		.io_type = IODEV_NET,
 		.links = LINKTYPE(LINKDEV_DPRAM),
-		},
+	},
 	[15] = {
 		.name = "rmnet3",
 		.id = 0x2D,
 		.format = IPC_RAW,
 		.io_type = IODEV_NET,
 		.links = LINKTYPE(LINKDEV_DPRAM),
-		},
+	},
 	[16] = {
 		.name = "cdma_SMD",
 		.id = (25 | 0x20),
 		.format = IPC_RAW,
 		.io_type = IODEV_MISC,
 		.links = LINKTYPE(LINKDEV_DPRAM),
-		},
+	},
 	[17] = {
 		.name = "cdma_VTVD",
 		.id = (26 | 0x20),
 		.format = IPC_RAW,
 		.io_type = IODEV_MISC,
 		.links = LINKTYPE(LINKDEV_DPRAM),
-		},
+	},
 	[18] = {
 		.name = "cdma_VTAD",
 		.id = (27 | 0x20),
 		.format = IPC_RAW,
 		.io_type = IODEV_MISC,
 		.links = LINKTYPE(LINKDEV_DPRAM),
-		},
+	},
 	[19] = {
 		.name = "cdma_VTCTRL",
 		.id = (28 | 0x20),
 		.format = IPC_RAW,
 		.io_type = IODEV_MISC,
 		.links = LINKTYPE(LINKDEV_DPRAM),
-		},
+	},
 	[20] = {
 		.name = "cdma_VTENT",
 		.id = (29 | 0x20),
 		.format = IPC_RAW,
 		.io_type = IODEV_MISC,
 		.links = LINKTYPE(LINKDEV_DPRAM),
-		},
+	},
 };
 
 static struct modem_data cdma_modem_data = {
@@ -474,9 +420,7 @@ static struct modem_data cdma_modem_data = {
 	.gpio_pda_active = GPIO_PDA_ACTIVE,
 	.gpio_phone_active = GPIO_MSM_PHONE_ACTIVE,
 	.gpio_flm_uart_sel = GPIO_BOOT_SW_SEL,
-#if 1
 	.gpio_flm_uart_sel_rev06 = GPIO_BOOT_SW_SEL_REV06,
-#endif
 
 	.gpio_dpram_int = GPIO_MSM_DPRAM_INT,
 	.gpio_host_wakeup = GPIO_IPC_HOST_WAKEUP,
@@ -500,10 +444,10 @@ static struct modem_data cdma_modem_data = {
 
 static struct resource cdma_modem_res[] = {
 	[0] = {
-	       .name = "cp_active_irq",
-	       .start = MSM_PHONE_ACTIVE_IRQ,
-	       .end = MSM_PHONE_ACTIVE_IRQ,
-	       .flags = IORESOURCE_IRQ,
+		.name = "cp_active_irq",
+		.start = MSM_PHONE_ACTIVE_IRQ,
+		.end = MSM_PHONE_ACTIVE_IRQ,
+		.flags = IORESOURCE_IRQ,
 	},
 	[1] = {
 		.name = "dpram_irq",
@@ -520,481 +464,8 @@ static struct platform_device cdma_modem = {
 	.resource = cdma_modem_res,
 	.dev = {
 		.platform_data = &cdma_modem_data,
-		},
+	},
 };
-
-static void msm_log_disp(struct modemlink_dpram_control *dpctl)
-{
-	static unsigned char buf[151];
-	u8 __iomem *tmp_buff = NULL;
-
-	tmp_buff = dpctl->get_rx_buff(IPC_FMT);
-	memcpy(buf, tmp_buff, (sizeof(buf) - 1));
-
-	pr_info("[LNK] | PHONE ERR MSG\t| CDMA Crash\n");
-	pr_info("[LNK] | PHONE ERR MSG\t| %s\n", buf);
-}
-
-static int msm_data_upload(struct _param_nv *param,
-			   struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-	u16 in_interrupt = 0;
-	int count = 0;
-
-	while (1) {
-		if (!gpio_get_value(GPIO_MSM_DPRAM_INT)) {
-			in_interrupt = dpctl->recv_msg();
-			if (in_interrupt == 0xDBAB) {
-				break;
-			} else {
-				pr_err("[LNK][intr]:0x%08x\n", in_interrupt);
-				pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-				return -1;
-			}
-		}
-		msleep_interruptible(1);
-		count++;
-		if (count > 200) {
-			pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-			return -1;
-		}
-	}
-
-	param->size = ioread16(msm_edpram_bt_map.frame_size);
-	memcpy(param->addr, msm_edpram_bt_map.buff, param->size);
-	param->tag = ioread16(msm_edpram_bt_map.tag);
-	param->count = ioread16(msm_edpram_bt_map.count);
-
-	dpctl->clear_intr();
-	dpctl->send_msg(0xDB12);
-
-	return retval;
-
-}
-
-static int msm_data_load(struct _param_nv *param,
-			 struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-
-	if (param->size <= DP_BOOT_FRAME_SIZE_LIMIT) {
-		memcpy(msm_edpram_bt_map.buff, param->addr, param->size);
-		iowrite16(param->size, msm_edpram_bt_map.frame_size);
-		iowrite16(param->tag, msm_edpram_bt_map.tag);
-		iowrite16(param->count, msm_edpram_bt_map.count);
-
-		dpctl->clear_intr();
-		dpctl->send_msg(0xDB12);
-
-	} else {
-		pr_err("[LNK/E]<%s> size:0x%x\n", __func__, param->size);
-	}
-
-	return retval;
-}
-
-static int msm_uload_step1(struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-	int count = 0;
-	u16 in_interrupt = 0, out_interrupt = 0;
-
-	pr_info("[LNK] +---------------------------------------------+\n");
-	pr_info("[LNK] |            UPLOAD PHONE SDRAM               |\n");
-	pr_info("[LNK] +---------------------------------------------+\n");
-
-	while (1) {
-		if (!gpio_get_value(GPIO_MSM_DPRAM_INT)) {
-			in_interrupt = dpctl->recv_msg();
-			pr_info("[LNK] [in_interrupt] 0x%04x\n", in_interrupt);
-			if (in_interrupt == 0x1234) {
-				break;
-			} else {
-				pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-				return -1;
-			}
-		}
-		msleep_interruptible(1);
-		count++;
-		if (count > 200) {
-			pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-			in_interrupt = dpctl->recv_msg();
-			if (in_interrupt == 0x1234) {
-				pr_info("[LNK] [in_interrupt]: 0x%04x\n",
-					in_interrupt);
-				break;
-			}
-			return -1;
-		}
-	}
-	out_interrupt = 0xDEAD;
-	dpctl->send_msg(out_interrupt);
-
-	return retval;
-}
-
-static int msm_uload_step2(void *arg, struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-	struct _param_nv param;
-
-	retval = copy_from_user((void *)&param, (void *)arg, sizeof(param));
-	if (retval < 0) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-
-	retval = msm_data_upload(&param, dpctl);
-	if (retval < 0) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-
-	if (!(param.count % 500))
-		pr_info("[LNK] [param->count]:%d\n", param.count);
-
-	if (param.tag == 4) {
-		dpctl->clear_intr();
-		enable_irq(msm_edpram_ctrl.dpram_irq);
-		pr_info("[LNK] [param->tag]:%d\n", param.tag);
-	}
-
-	retval = copy_to_user((unsigned long *)arg, &param, sizeof(param));
-	if (retval < 0) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-
-	return retval;
-}
-
-static int msm_dload_prep(struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-	int count = 0;
-
-	while (1) {
-		if (check_param.copy_start) {
-			check_param.copy_start = 0;
-			break;
-		}
-		msleep_interruptible(10);
-		count++;
-		if (count > 200) {
-			pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-			return -1;
-		}
-	}
-
-	return retval;
-}
-
-static int msm_dload(void *arg, struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-	int count = 0;
-	struct _param_nv param;
-
-	retval = copy_from_user((void *)&param, (void *)arg, sizeof(param));
-	if (retval < 0) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-
-	img = vmalloc(param.size);
-	if (img == NULL) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-	memset(img, 0, param.size);
-	memcpy(img, param.addr, param.size);
-
-	data_param = kzalloc(sizeof(struct _param_nv), GFP_KERNEL);
-	if (data_param == NULL) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		vfree(img);
-		img = NULL;
-		return -1;
-	}
-
-	check_param.total_size = param.size;
-	check_param.rest_size = param.size;
-	check_param.send_size = 0;
-	check_param.copy_complete = 0;
-
-	data_param->addr = img;
-	data_param->size = DP_BOOT_FRAME_SIZE_LIMIT;
-	data_param->count = param.count;
-
-	data_param->tag = 0x0001;
-
-	if (check_param.rest_size < DP_BOOT_FRAME_SIZE_LIMIT)
-		data_param->size = check_param.rest_size;
-
-	retval = msm_data_load(data_param, dpctl);
-
-	while (1) {
-		if (check_param.copy_complete) {
-			check_param.copy_complete = 0;
-
-			vfree(img);
-			img = NULL;
-			kfree(data_param);
-			data_param = NULL;
-
-			break;
-		}
-		msleep_interruptible(10);
-		count++;
-		if (count > 1000) {
-			pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-			vfree(img);
-			img = NULL;
-			kfree(data_param);
-			data_param = NULL;
-			return -1;
-		}
-	}
-
-	return retval;
-
-}
-
-static int msm_nv_load(void *arg, struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-	int count = 0;
-	struct _param_nv param;
-
-	retval = copy_from_user((void *)&param, (void *)arg, sizeof(param));
-	if (retval < 0) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-
-	nv_img = vmalloc(param.size);
-	if (nv_img == NULL) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-	memset(nv_img, 0, param.size);
-	memcpy(nv_img, param.addr, param.size);
-
-	data_param = kzalloc(sizeof(struct _param_nv), GFP_KERNEL);
-	if (data_param == NULL) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		vfree(nv_img);
-		nv_img = NULL;
-		return -1;
-	}
-
-	check_param.total_size = param.size;
-	check_param.rest_size = param.size;
-	check_param.send_size = 0;
-	check_param.copy_complete = 0;
-
-	data_param->addr = nv_img;
-	data_param->size = DP_BOOT_FRAME_SIZE_LIMIT;
-	data_param->count = 1;
-	data_param->tag = 0x0002;
-
-	if (check_param.rest_size < DP_BOOT_FRAME_SIZE_LIMIT)
-		data_param->size = check_param.rest_size;
-
-	retval = msm_data_load(data_param, dpctl);
-
-	while (1) {
-		if (check_param.copy_complete) {
-			check_param.copy_complete = 0;
-
-			vfree(nv_img);
-			nv_img = NULL;
-			kfree(data_param);
-			data_param = NULL;
-			break;
-		}
-		msleep_interruptible(10);
-		count++;
-		if (count > 200) {
-			pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-			vfree(nv_img);
-			nv_img = NULL;
-			kfree(data_param);
-			data_param = NULL;
-			return -1;
-		}
-	}
-
-	return retval;
-
-}
-
-static int msm_boot_start(struct modemlink_dpram_control *dpctl)
-{
-
-	u16 out_interrupt = 0;
-	int count = 0;
-
-	/* Send interrupt -> '0x4567' */
-	out_interrupt = 0x4567;
-	dpctl->send_msg(out_interrupt);
-
-	while (1) {
-		if (check_param.boot_complete) {
-			check_param.boot_complete = 0;
-			break;
-		}
-		msleep_interruptible(10);
-		count++;
-		if (count > 200) {
-			pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-			return -1;
-		}
-	}
-
-	return 0;
-}
-
-
-static void msm_terminate_link(struct modemlink_dpram_control *dpctl)
-{
-	pr_info("[LNK] +--------------msm_terminate_link------------+\n");
-	if (img != NULL) {
-		pr_info("[LNK] +--------------img free----------------+\n");
-		vfree(img);
-		img = NULL;
-	}
-	if (nv_img != NULL) {
-		pr_info("[LNK] +--------------nv_img free----------------+\n");
-		vfree(nv_img);
-		nv_img = NULL;
-	}
-	if (data_param != NULL) {
-		pr_info("[LNK] +--------------data_param free----------------+\n");
-		kfree(data_param);
-		data_param = NULL;
-	}
-
-}
-
-static struct modemlink_dpram_control *tasklet_dpctl;
-
-static void interruptable_load_tasklet_handler(unsigned long data);
-
-static DECLARE_TASKLET(interruptable_load_tasklet,
-		       interruptable_load_tasklet_handler,
-		       (unsigned long)&tasklet_dpctl);
-
-static void interruptable_load_tasklet_handler(unsigned long data)
-{
-	struct modemlink_dpram_control *dpctl =
-	    (struct modemlink_dpram_control *)
-	    (*((struct modemlink_dpram_control **)data));
-
-	if (data_param == NULL) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return;
-	}
-
-	check_param.send_size += data_param->size;
-	check_param.rest_size -= data_param->size;
-	data_param->addr += data_param->size;
-
-	if (check_param.send_size < check_param.total_size) {
-
-		if (check_param.rest_size < DP_BOOT_FRAME_SIZE_LIMIT)
-			data_param->size = check_param.rest_size;
-
-		data_param->count += 1;
-
-		msm_data_load(data_param, dpctl);
-	} else {
-		data_param->tag = 0;
-		check_param.copy_complete = 1;
-	}
-
-}
-
-static int msm_boot_start_post_proc(void)
-{
-	int count = 0;
-
-	while (1) {
-		if (boot_start_complete) {
-			boot_start_complete = 0;
-			break;
-		}
-		msleep_interruptible(10);
-		count++;
-		if (count > 200) {
-			pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-			return -1;
-		}
-	}
-
-	return 0;
-}
-
-static void msm_boot_start_handler(struct modemlink_dpram_control *dpctl)
-{
-	boot_start_complete = 1;
-
-	/* Send INIT_END code to CP */
-	pr_info("[LNK] <%s> Send 0x11C2 (INIT_END)\n", __func__);
-
-	/*
-	 * INT_MASK_VALID|INT_MASK_CMD|INT_MASK_CP_AIRPLANE_BOOT|
-	 * INT_MASK_CP_AP_ANDROID|INT_MASK_CMD_INIT_END
-	 */
-	dpctl->send_intr((0x0080 | 0x0040 | 0x1000 | 0x0100 | 0x0002));
-}
-
-static void msm_dload_handler(struct modemlink_dpram_control *dpctl, u16 cmd)
-{
-	switch (cmd) {
-	case 0x1234:
-		check_param.copy_start = 1;
-		break;
-
-	case 0xDBAB:
-		tasklet_schedule(&interruptable_load_tasklet);
-		break;
-
-	case 0xABCD:
-		check_param.boot_complete = 1;
-		break;
-
-	default:
-		pr_err("[LNK/Err] <%s> Unknown command.. %x\n", __func__, cmd);
-	}
-}
-
-static void msm_bt_map_init(struct modemlink_dpram_control *dpctl)
-{
-	msm_edpram_bt_map.buff = (u8 *) (dpctl->dp_base);
-	msm_edpram_bt_map.frame_size =
-	    (u16 *) (dpctl->dp_base + DP_BOOT_SIZE_OFFSET);
-	msm_edpram_bt_map.tag = (u16 *) (dpctl->dp_base + DP_BOOT_TAG_OFFSET);
-	msm_edpram_bt_map.count =
-	    (u16 *) (dpctl->dp_base + DP_BOOT_COUNT_OFFSET);
-}
-
-static void msm_load_init(struct modemlink_dpram_control *dpctl)
-{
-	tasklet_dpctl = dpctl;
-	if (tasklet_dpctl == NULL)
-		pr_err("[LNK/Err] failed tasklet_dpctl remap\n");
-
-	check_param.total_size = 0;
-	check_param.rest_size = 0;
-	check_param.send_size = 0;
-	check_param.copy_start = 0;
-	check_param.copy_complete = 0;
-	check_param.boot_complete = 0;
-
-	dpctl->clear_intr();
-}
 
 static void config_cdma_modem_gpio(void)
 {
@@ -1006,10 +477,8 @@ static void config_cdma_modem_gpio(void)
 	unsigned gpio_pda_active = cdma_modem_data.gpio_pda_active;
 	unsigned gpio_phone_active = cdma_modem_data.gpio_phone_active;
 	unsigned gpio_flm_uart_sel = cdma_modem_data.gpio_flm_uart_sel;
-#if 1
 	unsigned gpio_flm_uart_sel_rev06 =
-	    cdma_modem_data.gpio_flm_uart_sel_rev06;
-#endif
+			cdma_modem_data.gpio_flm_uart_sel_rev06;
 	unsigned gpio_dpram_int = cdma_modem_data.gpio_dpram_int;
 	unsigned gpio_host_wakeup = cdma_modem_data.gpio_host_wakeup;
 	unsigned gpio_cp_dump_int = cdma_modem_data.gpio_cp_dump_int;
@@ -1236,28 +705,6 @@ static u8 *msm_edpram_remap_mem_region(struct sromc_cfg *cfg)
 	dev->mask_res_ack = INT_MASK_RES_ACK_R;
 	dev->mask_send = INT_MASK_SEND_R;
 
-#if 0
-	/* RFS */
-	dev = &msm_ipc_map.dev[IPC_RFS];
-
-	strcpy(dev->name, "RFS");
-	dev->id = IPC_RFS;
-
-	dev->txq.head = (u16 __iomem *) &ipc_map->rfs_tx_head;
-	dev->txq.tail = (u16 __iomem *) &ipc_map->rfs_tx_tail;
-	dev->txq.buff = (u8 __iomem *) &ipc_map->rfs_tx_buff[0];
-	dev->txq.size = MSM_DP_RFS_TX_BUFF_SZ;
-
-	dev->rxq.head = (u16 __iomem *) &ipc_map->rfs_rx_head;
-	dev->rxq.tail = (u16 __iomem *) &ipc_map->rfs_rx_tail;
-	dev->rxq.buff = (u8 __iomem *) &ipc_map->rfs_rx_buff[0];
-	dev->rxq.size = MSM_DP_RFS_RX_BUFF_SZ;
-
-	dev->mask_req_ack = INT_MASK_REQ_ACK_RFS;
-	dev->mask_res_ack = INT_MASK_RES_ACK_RFS;
-	dev->mask_send = INT_MASK_SEND_RFS;
-#endif
-
 	/* Mailboxes */
 	msm_ipc_map.mbx_ap2cp = (u16 __iomem *) &ipc_map->mbx_ap2cp;
 	msm_ipc_map.mbx_cp2ap = (u16 __iomem *) &ipc_map->mbx_cp2ap;
@@ -1341,8 +788,9 @@ static void init_sromc(void)
 	clk_enable(clk);
 }
 
-static void setup_sromc
-(unsigned csn, struct sromc_cfg *cfg, struct sromc_access_cfg *acc_cfg) {
+static void setup_sromc(unsigned csn, struct sromc_cfg *cfg,
+			struct sromc_access_cfg *acc_cfg)
+{
 	unsigned bw = 0;
 	unsigned bc = 0;
 	void __iomem *bank_sfr = S5P_SROM_BC0 + (4 * csn);
@@ -1383,15 +831,7 @@ static void setup_sromc
 
 /* For ESC6270 modem */
 #if defined(CONFIG_GSM_MODEM_ESC6270)
-static struct _param_nv *data_param_gsm;
-static struct _param_check check_param_gsm;
-
-static unsigned int boot_start_complete_gsm;
-static struct msm_edpram_boot_map gsm_edpram_bt_map;
 static struct dpram_ipc_map gsm_ipc_map;
-
-static unsigned char *img_gsm;
-static unsigned char *nv_img_gsm;
 
 static struct sromc_cfg gsm_edpram_cfg = {
 	.attr = (MEM_DATA_BUS_16BIT | MEM_WAIT_EN | MEM_BYTE_EN),
@@ -1410,42 +850,19 @@ static struct sromc_access_cfg gsm_edpram_access_cfg[] = {
 	},
 };
 
-static void gsm_log_disp(struct modemlink_dpram_control *dpctl);
-static int gsm_uload_step1(struct modemlink_dpram_control *dpctl);
-static int gsm_uload_step2(void *arg, struct modemlink_dpram_control *dpctl);
-static int gsm_dload_prep(struct modemlink_dpram_control *dpctl);
-static int gsm_dload(void *arg, struct modemlink_dpram_control *dpctl);
-static int gsm_nv_load(void *arg, struct modemlink_dpram_control *dpctl);
-static int gsm_boot_start(struct modemlink_dpram_control *dpctl);
-static int gsm_boot_start_post_proc(void);
-static void gsm_boot_start_handler(struct modemlink_dpram_control *dpctl);
-static void gsm_dload_handler(struct modemlink_dpram_control *dpctl, u16 cmd);
-static void gsm_bt_map_init(struct modemlink_dpram_control *dpctl);
-static void gsm_load_init(struct modemlink_dpram_control *dpctl);
-static void gsm_terminate_link(struct modemlink_dpram_control *dpctl);
-
 static struct modemlink_dpram_control gsm_edpram_ctrl = {
-	.log_disp = gsm_log_disp,
-	.cpupload_step1 = gsm_uload_step1,
-	.cpupload_step2 = gsm_uload_step2,
-	.cpimage_load = gsm_dload,
-	.nvdata_load = gsm_nv_load,
-	.phone_boot_start = gsm_boot_start,
-	.dload_cmd_hdlr = gsm_dload_handler,
-	.bt_map_init = gsm_bt_map_init,
-	.load_init = gsm_load_init,
-	.cpimage_load_prepare = gsm_dload_prep,
-	.phone_boot_start_post_process = gsm_boot_start_post_proc,
-	.phone_boot_start_handler = gsm_boot_start_handler,
-	.terminate_link = gsm_terminate_link,
-
 	.dp_type = EXT_DPRAM,
 
 	.dpram_irq = ESC_DPRAM_INT_IRQ,
 	.dpram_irq_flags = IRQF_TRIGGER_FALLING,
 
 	.max_ipc_dev = IPC_RFS,
-	.ipc_map = &gsm_ipc_map;
+	.ipc_map = &gsm_ipc_map,
+
+	.boot_size_offset = DP_BOOT_SIZE_OFFSET,
+	.boot_tag_offset = DP_BOOT_TAG_OFFSET,
+	.boot_count_offset = DP_BOOT_COUNT_OFFSET,
+	.max_boot_frame_size = DP_BOOT_FRAME_SIZE_LIMIT,
 };
 
 /*
@@ -1453,148 +870,78 @@ static struct modemlink_dpram_control gsm_edpram_ctrl = {
 */
 static struct modem_io_t gsm_io_devices[] = {
 	[0] = {
+		.name = "gsm_ipc0",
+		.id = 0x01,
+		.format = IPC_FMT,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
+	[1] = {
+		.name = "gsm_rfs0",
+		.id = 0x28,
+		.format = IPC_RAW,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
+	[2] = {
 		.name = "gsm_boot0",
 		.id = 0x1,
 		.format = IPC_BOOT,
 		.io_type = IODEV_MISC,
 		.links = LINKTYPE(LINKDEV_DPRAM),
 	},
-	[1] = {
-		.name = "gsm_ramdump0",
-		.id = 0x1,
-		.format = IPC_RAMDUMP,
-		.io_type = IODEV_MISC,
-		.links = LINKTYPE(LINKDEV_DPRAM),
-	},
-	[2] = {
-		.name = "gsm_umts_ipc0",
-		.id = 0x01,
-		.format = IPC_FMT,
-		.io_type = IODEV_MISC,
-		.links = LINKTYPE(LINKDEV_DPRAM),
-	},
 	[3] = {
-		.name = "gsm_ipc0",
-		.id = 0x00,
-		.format = IPC_FMT,
-		.io_type = IODEV_MISC,
-		.links = LINKTYPE(LINKDEV_DPRAM),
-	},
-	[4] = {
 		.name = "gsm_multi_pdp",
 		.id = 0x1,
 		.format = IPC_MULTI_RAW,
 		.io_type = IODEV_DUMMY,
 		.links = LINKTYPE(LINKDEV_DPRAM),
 	},
-	[5] = {
-		.name = "gsm_CSD",
-		.id = (1|0x20),
-		.format = IPC_RAW,
-		.io_type = IODEV_MISC,
-		.links = LINKTYPE(LINKDEV_DPRAM),
-	},
-	[6] = {
-		.name = "gsm_FOTA",
-		.id = (2|0x20),
-		.format = IPC_RAW,
-		.io_type = IODEV_MISC,
-		.links = LINKTYPE(LINKDEV_DPRAM),
-	},
-	[7] = {
-		.name = "gsm_GPS",
-		.id = (5|0x20),
-		.format = IPC_RAW,
-		.io_type = IODEV_MISC,
-		.links = LINKTYPE(LINKDEV_DPRAM),
-	},
-	[8] = {
-		.name = "gsm_XTRA",
-		.id = (6|0x20),
-		.format = IPC_RAW,
-		.io_type = IODEV_MISC,
-		.links = LINKTYPE(LINKDEV_DPRAM),
-	},
-	[9] = {
-		.name = "gsm_CDMA",
-		.id = (7|0x20),
-		.format = IPC_RAW,
-		.io_type = IODEV_MISC,
-		.links = LINKTYPE(LINKDEV_DPRAM),
-	},
-	[10] = {
-		.name = "gsm_EFS",
-		.id = (8|0x20),
-		.format = IPC_RAW,
-		.io_type = IODEV_MISC,
-		.links = LINKTYPE(LINKDEV_DPRAM),
-	},
-	[11] = {
-		.name = "gsm_TRFB",
-		.id = (9|0x20),
-		.format = IPC_RAW,
-		.io_type = IODEV_MISC,
-		.links = LINKTYPE(LINKDEV_DPRAM),
-	},
-	[12] = {
+	[4] = {
 		.name = "gsm_rmnet0",
 		.id = 0x2A,
 		.format = IPC_RAW,
 		.io_type = IODEV_NET,
 		.links = LINKTYPE(LINKDEV_DPRAM),
 	},
-	[13] = {
+	[5] = {
 		.name = "gsm_rmnet1",
 		.id = 0x2B,
 		.format = IPC_RAW,
 		.io_type = IODEV_NET,
 		.links = LINKTYPE(LINKDEV_DPRAM),
 	},
-	[14] = {
+	[6] = {
 		.name = "gsm_rmnet2",
 		.id = 0x2C,
 		.format = IPC_RAW,
 		.io_type = IODEV_NET,
 		.links = LINKTYPE(LINKDEV_DPRAM),
 	},
-	[15] = {
-		.name = "gsm_rmnet3",
-		.id = 0x2D,
+	[7] = {
+		.name = "gsm_router",
+		.id = 0x39,
 		.format = IPC_RAW,
 		.io_type = IODEV_NET,
 		.links = LINKTYPE(LINKDEV_DPRAM),
 	},
-	[16] = {
-		.name = "gsm_SMD",
-		.id = (25|0x20),
+	[8] = {
+		.name = "gsm_csd",
+		.id = 0x21,
 		.format = IPC_RAW,
 		.io_type = IODEV_MISC,
 		.links = LINKTYPE(LINKDEV_DPRAM),
 	},
-	[17] = {
-		.name = "gsm_VTVD",
-		.id = (26|0x20),
-		.format = IPC_RAW,
+	[9] = {
+		.name = "gsm_ramdump0",
+		.id = 0x1,
+		.format = IPC_RAMDUMP,
 		.io_type = IODEV_MISC,
 		.links = LINKTYPE(LINKDEV_DPRAM),
 	},
-	[18] = {
-		.name = "gsm_VTAD",
-		.id = (27|0x20),
-		.format = IPC_RAW,
-		.io_type = IODEV_MISC,
-		.links = LINKTYPE(LINKDEV_DPRAM),
-	},
-	[19] = {
-		.name = "gsm_VTCTRL",
-		.id = (28|0x20),
-		.format = IPC_RAW,
-		.io_type = IODEV_MISC,
-		.links = LINKTYPE(LINKDEV_DPRAM),
-	},
-	[20] = {
-		.name = "gsm_VTENT",
-		.id = (29|0x20),
+	[10] = {
+		.name = "gsm_loopback0",
+		.id = 0x3F,
 		.format = IPC_RAW,
 		.io_type = IODEV_MISC,
 		.links = LINKTYPE(LINKDEV_DPRAM),
@@ -1604,28 +951,28 @@ static struct modem_io_t gsm_io_devices[] = {
 static struct modem_data gsm_modem_data = {
 	.name = "esc6270",
 
-	.gpio_cp_on        = GPIO_CP2_MSM_PWRON,
-	.gpio_cp_off       = 0,
-	.gpio_reset_req_n  = 0,	/* GPIO_CP_MSM_PMU_RST, */
-	.gpio_cp_reset     = GPIO_CP2_MSM_RST,
-	.gpio_pda_active   = 0,
+	.gpio_cp_on = GPIO_CP2_MSM_PWRON,
+	.gpio_cp_off = 0,
+	.gpio_reset_req_n = 0,	/* GPIO_CP_MSM_PMU_RST, */
+	.gpio_cp_reset = GPIO_CP2_MSM_RST,
+	.gpio_pda_active = 0,
 	.gpio_phone_active = GPIO_ESC_PHONE_ACTIVE,
 	.gpio_flm_uart_sel = GPIO_BOOT_SW_SEL_CP2,
 
 	.gpio_dpram_int = GPIO_ESC_DPRAM_INT,
 
-	.gpio_cp_dump_int   = 0,
+	.gpio_cp_dump_int = 0,
 	.gpio_cp_warm_reset = 0,
 
 	.use_handover = false,
 
-	.modem_net  = CDMA_NETWORK,
+	.modem_net = CDMA_NETWORK,
 	.modem_type = QC_ESC6270,
 	.link_types = LINKTYPE(LINKDEV_DPRAM),
-	.link_name  = "esc6270_edpram",
-	.dpram_ctl  = &gsm_edpram_ctrl,
+	.link_name = "esc6270_edpram",
+	.dpram_ctl = &gsm_edpram_ctrl,
 
-	.ipc_version	= SIPC_VER_42,
+	.ipc_version = SIPC_VER_41,
 
 	.num_iodevs = ARRAY_SIZE(gsm_io_devices),
 	.iodevs     = gsm_io_devices,
@@ -1633,9 +980,9 @@ static struct modem_data gsm_modem_data = {
 
 static struct resource gsm_modem_res[] = {
 	[0] = {
-		.name  = "cp_active_irq",
+		.name = "cp_active_irq",
 		.start = ESC_PHONE_ACTIVE_IRQ,
-		.end   = ESC_PHONE_ACTIVE_IRQ,
+		.end = ESC_PHONE_ACTIVE_IRQ,
 		.flags = IORESOURCE_IRQ,
 	},
 	[1] = {
@@ -1655,504 +1002,6 @@ static struct platform_device gsm_modem = {
 		.platform_data = &gsm_modem_data,
 	},
 };
-
-static void gsm_log_disp(struct modemlink_dpram_control *dpctl)
-{
-	static unsigned char buf[151];
-	u8 __iomem *tmp_buff = NULL;
-
-	tmp_buff = dpctl->get_rx_buff(IPC_FMT);
-	memcpy(buf, tmp_buff, (sizeof(buf)-1));
-
-	pr_info("[LNK] | PHONE ERR MSG\t| CDMA Crash\n");
-	pr_info("[LNK] | PHONE ERR MSG\t| %s\n", buf);
-}
-
-static int gsm_data_upload(struct _param_nv *param,
-	struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-	u16 in_interrupt = 0;
-	int count = 0;
-
-	while (1) {
-		if (!gpio_get_value(GPIO_MSM_DPRAM_INT)) {
-			in_interrupt = dpctl->recv_msg();
-			if (in_interrupt == 0xDBAB) {
-				break;
-			} else {
-				pr_err("[LNK][intr]:0x%08x\n", in_interrupt);
-				pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-				return -1;
-			}
-		}
-		msleep_interruptible(1);
-		count++;
-		if (count > 200) {
-			pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-			return -1;
-		}
-	}
-
-	param->size = ioread16(gsm_edpram_bt_map.frame_size);
-	memcpy(param->addr, gsm_edpram_bt_map.buff, param->size);
-	param->tag = ioread16(gsm_edpram_bt_map.tag);
-	param->count = ioread16(gsm_edpram_bt_map.count);
-
-	dpctl->clear_intr();
-	dpctl->send_msg(0xDB12);
-
-	return retval;
-
-}
-
-static int gsm_data_load(struct _param_nv *param,
-	struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-
-	if (param->size <= DP_BOOT_FRAME_SIZE_LIMIT) {
-		memcpy(gsm_edpram_bt_map.buff, param->addr, param->size);
-		iowrite16(param->size, gsm_edpram_bt_map.frame_size);
-		iowrite16(param->tag, gsm_edpram_bt_map.tag);
-		iowrite16(param->count, gsm_edpram_bt_map.count);
-
-		dpctl->clear_intr();
-		dpctl->send_msg(0xDB12);
-
-	} else {
-		pr_err("[LNK/E]<%s> size:0x%x\n", __func__, param->size);
-	}
-
-	return retval;
-}
-
-static int gsm_uload_step1(struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-	int count = 0;
-	u16 in_interrupt = 0, out_interrupt = 0;
-
-	pr_info("[LNK] +---------------------------------------------+\n");
-	pr_info("[LNK] |            UPLOAD GSN-PHONE SDRAM               |\n");
-	pr_info("[LNK] +---------------------------------------------+\n");
-
-	while (1) {
-		if (!gpio_get_value(GPIO_ESC_DPRAM_INT)) {
-			in_interrupt = dpctl->recv_msg();
-			pr_info("[LNK] [in_interrupt] 0x%04x\n", in_interrupt);
-			if (in_interrupt == 0x1234) {
-				break;
-			} else {
-				pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-				return -1;
-			}
-		}
-		msleep_interruptible(1);
-		count++;
-		if (count > 200) {
-			pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-			in_interrupt = dpctl->recv_msg();
-			if (in_interrupt == 0x1234) {
-				pr_info("[LNK] [in_interrupt]: 0x%04x\n",
-							in_interrupt);
-				break;
-			}
-			return -1;
-		}
-	}
-	out_interrupt = 0xDEAD;
-	dpctl->send_msg(out_interrupt);
-
-	return retval;
-}
-
-static int gsm_uload_step2(void *arg, struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-	struct _param_nv param;
-
-	retval = copy_from_user((void *)&param, (void *)arg, sizeof(param));
-	if (retval < 0) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-
-	retval = msm_data_upload(&param, dpctl);
-	if (retval < 0) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-
-	if (!(param.count % 500))
-		pr_info("[LNK] [param->count]:%d\n", param.count);
-
-	if (param.tag == 4) {
-		dpctl->clear_intr();
-		enable_irq(gsm_edpram_ctrl.dpram_irq);
-		pr_info("[LNK] [param->tag]:%d\n", param.tag);
-	}
-
-	retval = copy_to_user((unsigned long *)arg, &param, sizeof(param));
-	if (retval < 0) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-
-	return retval;
-}
-
-static int gsm_dload_prep(struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-	int count = 0;
-
-	pr_err("[LNK]<%s:%d>\n", __func__, __LINE__);
-
-	while (1) {
-		if (check_param_gsm.copy_start) {
-			check_param_gsm.copy_start = 0;
-			break;
-		}
-		msleep_interruptible(10);
-		count++;
-		if (count > 2000) {
-			pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-			return -1;
-		}
-	}
-
-	return retval;
-}
-
-static int gsm_dload(void *arg, struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-	int count = 0;
-	struct _param_nv param;
-
-	retval = copy_from_user((void *)&param, (void *)arg, sizeof(param));
-	if (retval < 0) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-
-	pr_err("[LNK/E]<%s:%d> param.addr 0x%x, param.size 0x%x, param.count %d\n",
-		__func__, __LINE__, *(param.addr), param.size, param.count);
-
-	img_gsm = vmalloc(param.size);
-	if (img_gsm == NULL) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-	memset(img_gsm, 0, param.size);
-	memcpy(img_gsm, param.addr, param.size);
-
-	data_param_gsm = kzalloc(sizeof(struct _param_nv), GFP_KERNEL);
-	if (data_param_gsm == NULL)	{
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		vfree(img_gsm);
-		img_gsm = NULL;
-		return -1;
-	}
-
-	check_param_gsm.total_size = param.size;
-	check_param_gsm.rest_size = param.size;
-	check_param_gsm.send_size = 0;
-	check_param_gsm.copy_complete = 0;
-
-	data_param_gsm->addr = img_gsm;
-	data_param_gsm->size = DP_BOOT_FRAME_SIZE_LIMIT;
-	data_param_gsm->count = param.count;
-
-	data_param_gsm->tag = 0x0001;
-
-	if (check_param_gsm.rest_size < DP_BOOT_FRAME_SIZE_LIMIT)
-		data_param_gsm->size = check_param_gsm.rest_size;
-
-	retval = gsm_data_load(data_param_gsm, dpctl);
-
-	while (1) {
-		if (check_param_gsm.copy_complete) {
-			check_param_gsm.copy_complete = 0;
-
-			vfree(img_gsm);
-			img_gsm = NULL;
-			kfree(data_param_gsm);
-			data_param_gsm = NULL;
-
-			break;
-		}
-		msleep_interruptible(10);
-		count++;
-		if (count > 1000) {
-			pr_err("[LNK/E]<%s:%d> dpram interrupt timeout\n",
-					__func__, __LINE__);
-			vfree(img_gsm);
-			img_gsm = NULL;
-			kfree(data_param_gsm);
-			data_param_gsm = NULL;
-			return -1;
-		}
-	}
-
-	return retval;
-
-}
-
-static int gsm_nv_load(void *arg, struct modemlink_dpram_control *dpctl)
-{
-	int retval = 0;
-	int count = 0;
-	struct _param_nv param;
-
-	pr_err("[LNK]<%s:%d>\n", __func__, __LINE__);
-
-	retval = copy_from_user((void *)&param, (void *)arg, sizeof(param));
-	if (retval < 0) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-
-	nv_img_gsm = vmalloc(param.size);
-	if (nv_img_gsm == NULL) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return -1;
-	}
-	memset(nv_img_gsm, 0, param.size);
-	memcpy(nv_img_gsm, param.addr, param.size);
-
-	data_param_gsm = kzalloc(sizeof(struct _param_nv), GFP_KERNEL);
-	if (data_param_gsm == NULL) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		vfree(nv_img_gsm);
-		nv_img_gsm = NULL;
-		return -1;
-	}
-
-	check_param_gsm.total_size = param.size;
-	check_param_gsm.rest_size = param.size;
-	check_param_gsm.send_size = 0;
-	check_param_gsm.copy_complete = 0;
-
-	data_param_gsm->addr = nv_img_gsm;
-	data_param_gsm->size = DP_BOOT_FRAME_SIZE_LIMIT;
-	data_param_gsm->count = 1;
-	data_param_gsm->tag = 0x0002;
-
-	if (check_param_gsm.rest_size < DP_BOOT_FRAME_SIZE_LIMIT)
-		data_param_gsm->size = check_param_gsm.rest_size;
-
-	retval = gsm_data_load(data_param_gsm, dpctl);
-
-	while (1) {
-		if (check_param_gsm.copy_complete) {
-			check_param_gsm.copy_complete = 0;
-
-			vfree(nv_img_gsm);
-			nv_img_gsm = NULL;
-			kfree(data_param_gsm);
-			data_param_gsm = NULL;
-			break;
-		}
-		msleep_interruptible(10);
-		count++;
-		if (count > 200) {
-			pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-			vfree(nv_img_gsm);
-			nv_img_gsm = NULL;
-			kfree(data_param_gsm);
-			data_param_gsm = NULL;
-			return -1;
-		}
-	}
-
-	return retval;
-
-}
-
-static int gsm_boot_start(struct modemlink_dpram_control *dpctl)
-{
-
-	u16 out_interrupt = 0;
-	int count = 0;
-
-	pr_err("[LNK]<%s:%d>\n", __func__, __LINE__);
-
-	/* Send interrupt -> '0x4567' */
-	out_interrupt = 0x4567;
-	dpctl->send_msg(out_interrupt);
-
-	while (1) {
-		if (check_param_gsm.boot_complete) {
-			check_param_gsm.boot_complete = 0;
-				pr_err("[LNK]<%s:%d>gsm_boot_start finished.\n",
-				__func__, __LINE__);
-			break;
-		}
-		msleep_interruptible(10);
-		count++;
-		if (count > 200) {
-			pr_err("[LNK/E]<%s:%d> timeout !\n",
-					__func__, __LINE__);
-			return -1;
-		}
-	}
-
-	return 0;
-}
-
-static void gsm_terminate_link(struct modemlink_dpram_control *dpctl)
-{
-	pr_info("[LNK] +--------------gsm_terminate_link------------+\n");
-	if (img_gsm != NULL) {
-		pr_info("[LNK] +--------------img_gsm free----------------+\n");
-		vfree(img_gsm);
-		img_gsm = NULL;
-	}
-	if (nv_img_gsm != NULL) {
-		pr_info("[LNK] +--------------nv_img_gsm free----------------+\n");
-		vfree(nv_img_gsm);
-		nv_img_gsm = NULL;
-	}
-	if (data_param_gsm != NULL) {
-		pr_info("[LNK] +--------------data_param_gsm free----------------+\n");
-		kfree(data_param_gsm);
-		data_param_gsm = NULL;
-	}
-}
-
-static struct modemlink_dpram_control *tasklet_dpctl_gsm;
-
-static void interruptable_load_tasklet_handler_gsm(unsigned long data);
-
-static DECLARE_TASKLET(interruptable_load_tasklet_gsm,
-			interruptable_load_tasklet_handler_gsm,
-			(unsigned long) &tasklet_dpctl_gsm);
-
-static void interruptable_load_tasklet_handler_gsm(unsigned long data)
-{
-	struct modemlink_dpram_control *dpctl =
-		(struct modemlink_dpram_control *)
-		(*((struct modemlink_dpram_control **) data));
-
-	if (data_param_gsm == NULL) {
-		pr_err("[LNK/E]<%s:%d>\n", __func__, __LINE__);
-		return;
-	}
-
-	check_param_gsm.send_size += data_param_gsm->size;
-	check_param_gsm.rest_size -= data_param_gsm->size;
-	data_param_gsm->addr += data_param_gsm->size;
-
-	if (check_param_gsm.send_size < check_param_gsm.total_size) {
-
-		if (check_param_gsm.rest_size < DP_BOOT_FRAME_SIZE_LIMIT)
-			data_param_gsm->size = check_param_gsm.rest_size;
-
-
-		data_param_gsm->count += 1;
-
-		gsm_data_load(data_param_gsm, dpctl);
-	} else {
-		data_param_gsm->tag = 0;
-		check_param_gsm.copy_complete = 1;
-	}
-
-}
-
-static int gsm_boot_start_post_proc(void)
-{
-	int count = 0;
-
-	pr_err("[LNK]<%s:%d>\n", __func__, __LINE__);
-
-	while (1) {
-		if (boot_start_complete_gsm) {
-			boot_start_complete_gsm = 0;
-			pr_err("[LNK]<%s:%d> boot_start_complete_gsm\n",
-					__func__, __LINE__);
-			break;
-		}
-		msleep_interruptible(10);
-		count++;
-		if (count > 200) {
-			pr_err("[LNK/E]<%s:%d> timeout !\n",
-					__func__, __LINE__);
-			return -1;
-		}
-	}
-
-	return 0;
-}
-
-static void gsm_boot_start_handler(struct modemlink_dpram_control *dpctl)
-{
-	boot_start_complete_gsm = 1;
-
-	/* Change UART-select switch to use as SIM_RESET,SIM_DATA port */
-	if (gsm_modem_data.gpio_flm_uart_sel)
-		gpio_set_value(gsm_modem_data.gpio_flm_uart_sel, 0);
-
-	/* Send INIT_END code to CP */
-	pr_info("[LNK] <%s> Send 0x11C2 (INIT_END)\n", __func__);
-
-	/*
-	 * INT_MASK_VALID|INT_MASK_CMD|INT_MASK_CP_AIRPLANE_BOOT|
-	 * INT_MASK_CP_AP_ANDROID|INT_MASK_CMD_INIT_END
-	 */
-	dpctl->send_intr((0x0080|0x0040|0x1000|0x0100|0x0002));
-}
-
-static void gsm_dload_handler(struct modemlink_dpram_control *dpctl, u16 cmd)
-{
-	switch (cmd) {
-	case 0x1234:
-		check_param_gsm.copy_start = 1;
-		break;
-
-	case 0xDBAB:
-		tasklet_schedule(&interruptable_load_tasklet_gsm);
-		break;
-
-	case 0xABCD:
-		check_param_gsm.boot_complete = 1;
-		break;
-
-	default:
-		pr_err("[LNK/Err] <%s> Unknown command.. %x\n", __func__, cmd);
-	}
-}
-
-static void gsm_bt_map_init(struct modemlink_dpram_control *dpctl)
-{
-	pr_err("[LNK]<%s:%d>\n", __func__, __LINE__);
-
-	gsm_edpram_bt_map.buff = (u8 *)(dpctl->dp_base);
-	gsm_edpram_bt_map.frame_size  =
-		(u16 *)(dpctl->dp_base + DP_BOOT_SIZE_OFFSET);
-	gsm_edpram_bt_map.tag =
-		(u16 *)(dpctl->dp_base + DP_BOOT_TAG_OFFSET);
-	gsm_edpram_bt_map.count =
-		(u16 *)(dpctl->dp_base + DP_BOOT_COUNT_OFFSET);
-}
-
-
-static void gsm_load_init(struct modemlink_dpram_control *dpctl)
-{
-	tasklet_dpctl_gsm = dpctl;
-	if (tasklet_dpctl_gsm == NULL)
-		pr_err("[LNK/Err] failed tasklet_dpctl_gsm remap\n");
-
-	check_param_gsm.total_size = 0;
-	check_param_gsm.rest_size = 0;
-	check_param_gsm.send_size = 0;
-	check_param_gsm.copy_start = 0;
-	check_param_gsm.copy_complete = 0;
-	check_param_gsm.boot_complete = 0;
-
-	dpctl->clear_intr();
-}
 
 void config_gsm_modem_gpio(void)
 {
@@ -2287,10 +1136,10 @@ void config_gsm_modem_gpio(void)
 
 static u8 *gsm_edpram_remap_mem_region(struct sromc_cfg *cfg)
 {
-	int			      dp_addr = 0;
-	int			      dp_size = 0;
-	u8 __iomem                   *dp_base = NULL;
-	struct msm_edpram_ipc_cfg    *ipc_map = NULL;
+	int dp_addr = 0;
+	int dp_size = 0;
+	u8 __iomem *dp_base = NULL;
+	struct msm_edpram_ipc_cfg *ipc_map = NULL;
 	struct dpram_ipc_device *dev = NULL;
 
 	dp_addr = cfg->addr;
@@ -2309,7 +1158,7 @@ static u8 *gsm_edpram_remap_mem_region(struct sromc_cfg *cfg)
 	ipc_map = (struct msm_edpram_ipc_cfg *)dp_base;
 
 	/* Magic code and access enable fields */
-	gsm_ipc_map.magic  = (u16 __iomem *)&ipc_map->magic;
+	gsm_ipc_map.magic = (u16 __iomem *)&ipc_map->magic;
 	gsm_ipc_map.access = (u16 __iomem *)&ipc_map->access;
 
 	/* FMT */
@@ -2330,7 +1179,7 @@ static u8 *gsm_edpram_remap_mem_region(struct sromc_cfg *cfg)
 
 	dev->mask_req_ack = INT_MASK_REQ_ACK_F;
 	dev->mask_res_ack = INT_MASK_RES_ACK_F;
-	dev->mask_send    = INT_MASK_SEND_F;
+	dev->mask_send = INT_MASK_SEND_F;
 
 	/* RAW */
 	dev = &gsm_ipc_map.dev[IPC_RAW];
@@ -2350,29 +1199,7 @@ static u8 *gsm_edpram_remap_mem_region(struct sromc_cfg *cfg)
 
 	dev->mask_req_ack = INT_MASK_REQ_ACK_R;
 	dev->mask_res_ack = INT_MASK_RES_ACK_R;
-	dev->mask_send    = INT_MASK_SEND_R;
-
-#if 0
-	/* RFS */
-	dev = &gsm_ipc_map.dev[IPC_RFS];
-
-	strcpy(dev->name, "RFS");
-	dev->id = IPC_RFS;
-
-	dev->txq.head = (u16 __iomem *)&ipc_map->rfs_tx_head;
-	dev->txq.tail = (u16 __iomem *)&ipc_map->rfs_tx_tail;
-	dev->txq.buff = (u8 __iomem *)&ipc_map->rfs_tx_buff[0];
-	dev->txq.size = MSM_DP_RFS_TX_BUFF_SZ;
-
-	dev->rxq.head = (u16 __iomem *)&ipc_map->rfs_rx_head;
-	dev->rxq.tail = (u16 __iomem *)&ipc_map->rfs_rx_tail;
-	dev->rxq.buff = (u8 __iomem *)&ipc_map->rfs_rx_buff[0];
-	dev->rxq.size = MSM_DP_RFS_RX_BUFF_SZ;
-
-	dev->mask_req_ack = INT_MASK_REQ_ACK_RFS;
-	dev->mask_res_ack = INT_MASK_RES_ACK_RFS;
-	dev->mask_send    = INT_MASK_SEND_RFS;
-#endif
+	dev->mask_send = INT_MASK_SEND_R;
 
 	/* Mailboxes */
 	gsm_ipc_map.mbx_ap2cp = (u16 __iomem *)&ipc_map->mbx_ap2cp;
@@ -2380,9 +1207,7 @@ static u8 *gsm_edpram_remap_mem_region(struct sromc_cfg *cfg)
 
 	return dp_base;
 }
-
 #endif
-
 
 static int __init init_modem(void)
 {

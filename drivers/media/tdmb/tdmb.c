@@ -49,7 +49,10 @@
 
 #include <linux/io.h>
 #include <mach/gpio.h>
-
+#ifdef CONFIG_MACH_C1
+#include <linux/wakelock.h>
+static struct wake_lock tdmb_wlock;
+#endif
 #include "tdmb.h"
 #define TDMB_PRE_MALLOC 1
 
@@ -89,7 +92,9 @@ static bool tdmb_power_on(void)
 	}
 
 	DPRINTK("power_on success\n");
-
+#ifdef CONFIG_MACH_C1
+	wake_lock(&tdmb_wlock);
+#endif
 	tdmb_pwr_on = true;
 	return true;
 
@@ -110,6 +115,9 @@ static bool tdmb_power_off(void)
 		tdmbdrv_func->power_off();
 		tdmb_destroy_workqueue();
 		tdmb_destroy_databuffer();
+#ifdef CONFIG_MACH_C1
+		wake_unlock(&tdmb_wlock);
+#endif
 		tdmb_pwr_on = false;
 	}
 	tdmb_last_ch = 0;
@@ -572,7 +580,9 @@ static int tdmb_probe(struct platform_device *pdev)
 #if TDMB_PRE_MALLOC
 	tdmb_make_ring_buffer();
 #endif
-
+#ifdef CONFIG_MACH_C1
+	wake_lock_init(&tdmb_wlock, WAKE_LOCK_SUSPEND, "tdmb_wlock");
+#endif
 	return 0;
 }
 
@@ -637,6 +647,9 @@ static void __exit tdmb_exit(void)
 	platform_driver_unregister(&tdmb_driver);
 
 	tdmb_exit_bus();
+#ifdef CONFIG_MACH_C1
+	wake_lock_destroy(&tdmb_wlock);
+#endif
 }
 
 module_init(tdmb_init);

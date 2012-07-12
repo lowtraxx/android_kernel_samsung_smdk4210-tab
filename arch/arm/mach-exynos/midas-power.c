@@ -281,6 +281,9 @@ static struct regulator_consumer_supply ldo3_supply[] = {
 	REGULATOR_SUPPLY("DBVDD1", NULL),
 	REGULATOR_SUPPLY("DBVDD2", NULL),
 	REGULATOR_SUPPLY("DBVDD3", NULL),
+#ifdef CONFIG_MACH_REDWOOD
+	REGULATOR_SUPPLY("VDDI", "s6d6aa1"),
+#endif
 };
 #else
 static struct regulator_consumer_supply ldo3_supply[] = {};
@@ -347,8 +350,9 @@ static struct regulator_consumer_supply ldo23_supply[] = {
 	REGULATOR_SUPPLY("touch", NULL),
 };
 
-#if defined(CONFIG_MACH_C1) || defined(CONFIG_MACH_C1VZW) ||	\
-	defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_M3) ||	\
+#if defined(CONFIG_MACH_C1) || defined(CONFIG_MACH_C1VZW) || \
+	defined(CONFIG_MACH_C2) || \
+	defined(CONFIG_MACH_M0) || \
 	defined(CONFIG_MACH_GC1) || defined(CONFIG_MACH_T0)
 static struct regulator_consumer_supply ldo24_supply[] = {
 	REGULATOR_SUPPLY("touch_1.8v", NULL),
@@ -445,8 +449,9 @@ REGULATOR_INIT(ldo21, "VTF_2.8V", 2800000, 2800000, 0,
 	       REGULATOR_CHANGE_STATUS, 1);
 REGULATOR_INIT(ldo23, "TSP_AVDD_3.3V", 3300000, 3300000, 0,
 	       REGULATOR_CHANGE_STATUS, 1);
-#if defined(CONFIG_MACH_C1) || defined(CONFIG_MACH_C1VZW) ||	\
-	defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_M3) ||	\
+#if defined(CONFIG_MACH_C1) || defined(CONFIG_MACH_C1VZW) || \
+	defined(CONFIG_MACH_C2) || \
+	defined(CONFIG_MACH_M0) || \
 	defined(CONFIG_MACH_GC1) || defined(CONFIG_MACH_T0)
 REGULATOR_INIT(ldo24, "VDD_1.8V_TSP", 1800000, 1800000, 0,
 	       REGULATOR_CHANGE_STATUS, 1);
@@ -1112,13 +1117,8 @@ struct s5m_platform_data exynos4_s5m8767_info = {
 
 void midas_power_init(void)
 {
-#ifdef CONFIG_MACH_S2PLUS
-	ldo8_init_data.constraints.always_on = 1;
-	ldo13_init_data.constraints.always_on = 1;
-#else
 	ldo8_init_data.constraints.always_on = 1;
 	ldo10_init_data.constraints.always_on = 1;
-#endif
 }
 
 /* End of S5M8767 */

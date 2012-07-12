@@ -62,6 +62,7 @@ static const char const *modem_state_name[] = {
 	[STATE_BOOTING]		= "BOOTING",
 	[STATE_ONLINE]		= "ONLINE",
 	[STATE_LOADER_DONE]	= "LOADER_DONE",
+	[STATE_NV_REBUILDING]	= "NV_REBUILDING",
 };
 
 static int rx_iodev_skb(struct io_device *iod);
@@ -583,7 +584,7 @@ static void io_dev_modem_state_changed(struct io_device *iod,
 	pr_info("[MODEM_IF] %s state changed: %s\n", \
 				iod->name, modem_state_name[state]);
 
-	if (state == STATE_CRASH_EXIT)
+	if ((state == STATE_CRASH_EXIT) || (state == STATE_NV_REBUILDING))
 		wake_up(&iod->wq);
 }
 
@@ -622,7 +623,8 @@ static unsigned int misc_poll(struct file *filp,
 	if ((!skb_queue_empty(&iod->sk_rx_q))
 				&& (iod->mc->phone_state != STATE_OFFLINE))
 		return POLLIN | POLLRDNORM;
-	else if (iod->mc->phone_state == STATE_CRASH_EXIT)
+	else if ((iod->mc->phone_state == STATE_CRASH_EXIT) ||
+		(iod->mc->phone_state == STATE_NV_REBUILDING))
 		return POLLHUP;
 	else
 		return 0;
@@ -630,6 +632,7 @@ static unsigned int misc_poll(struct file *filp,
 
 static long misc_ioctl(struct file *filp, unsigned int cmd, unsigned long _arg)
 {
+	int p_state;
 	struct io_device *iod = (struct io_device *)filp->private_data;
 
 	pr_debug("[MODEM_IF] misc_ioctl : 0x%x\n", cmd);
@@ -670,7 +673,12 @@ static long misc_ioctl(struct file *filp, unsigned int cmd, unsigned long _arg)
 
 	case IOCTL_MODEM_STATUS:
 		pr_debug("[MODEM_IF] misc_ioctl : IOCTL_MODEM_STATUS\n");
-		return iod->mc->phone_state;
+		p_state = iod->mc->phone_state;
+		if (p_state == STATE_NV_REBUILDING) {
+			pr_info("[MODEM_IF] nv rebuild state : %d\n", p_state);
+			iod->mc->phone_state = STATE_ONLINE;
+		}
+		return p_state;
 
 	case IOCTL_MODEM_DUMP_START:
 		pr_debug("[MODEM_IF] misc_ioctl : IOCTL_MODEM_DUMP_START\n");

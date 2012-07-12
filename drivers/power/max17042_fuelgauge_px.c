@@ -139,11 +139,11 @@ void fg_write_and_verify_register(u8 addr, u16 w_data)
 	}
 }
 
-static void fg_test_print(void)
+static void fg_debug_print(void)
 {
 	struct i2c_client *client = fg_i2c_client;
 	u8 data[2];
-	u32 average_vcell;
+	u32 avg_v;
 	u16 w_data;
 	u32 temp;
 	u32 temp2;
@@ -157,46 +157,20 @@ static void fg_test_print(void)
 	w_data = (data[1]<<8) | data[0];
 
 	temp = (w_data & 0xFFF) * 78125;
-	average_vcell = temp / 1000000;
+	avg_v = temp / 1000000;
 
 	temp = ((w_data & 0xF000) >> 4) * 78125;
 	temp2 = temp / 1000000;
-	average_vcell += (temp2 << 4);
+	avg_v += (temp2 << 4);
 
 	fullcap = fg_read_register(FULLCAP_REG);
 	remcap = fg_read_register(REMCAP_REP_REG);
 	mixcap = fg_read_register(REMCAP_MIX_REG);
 	avcap = fg_read_register(REMCAP_AV_REG);
 
-	pr_info("avg_vcell(%d), fullcap(%d),  remcap(%d), mixcap(%d), avcap(%d)\n",
-		average_vcell, fullcap/2, remcap/2, mixcap/2, avcap/2);
+	pr_info("avg_v(%d), fullcap(%d), remcap(%d), mixcap(%d), avcap(%d)\n",
+		avg_v, (fullcap / 2), (remcap / 2), (mixcap / 2), (avcap / 2));
 	msleep(20);
-}
-
-static int fg_read_voltage_now(void)
-{
-	struct i2c_client *client = fg_i2c_client;
-	u8 data[2];
-	u32 voltage_now;
-	u16 w_data;
-	u32 temp;
-	u32 temp2;
-
-	if (fg_i2c_read(client, VCELL_REG, data, 2) < 0) {
-		pr_err("%s: Failed to read VCELL\n", __func__);
-		return -1;
-	}
-
-	w_data = (data[1]<<8) | data[0];
-
-	temp = (w_data & 0xFFF) * 78125;
-	voltage_now = temp / 1000;
-
-	temp = ((w_data & 0xF000) >> 4) * 78125;
-	temp2 = temp / 1000;
-	voltage_now += (temp2 << 4);
-
-	return voltage_now;
 }
 
 static int fg_read_vcell(void)
@@ -224,8 +198,8 @@ static int fg_read_vcell(void)
 	vcell += (temp2 << 4);
 
 	if (!(chip->info.pr_cnt % PRINT_COUNT))
-		pr_info("%s: VCELL(%d), data(0x%04x)\n",
-			__func__, vcell, (data[1]<<8) | data[0]);
+		pr_info("%s: vcell(%d, 0x%04x)\n", __func__,
+				vcell, (data[1]<<8) | data[0]);
 
 	return vcell;
 }
@@ -342,10 +316,23 @@ static int fg_read_temp(void)
 		temper = 20000;
 
 	if (!(chip->info.pr_cnt % PRINT_COUNT))
-		pr_info("%s: TEMPERATURE(%d), data(0x%04x)\n", __func__,
+		pr_info("%s: temper(%d, 0x%04x)\n", __func__,
 				temper, (data[1]<<8) | data[0]);
 
 	return temper;
+}
+
+static int fg_read_vfsoc(void)
+{
+	struct i2c_client *client = fg_i2c_client;
+	u8 data[2];
+
+	if (fg_i2c_read(client, VFSOC_REG, data, 2) < 0) {
+		pr_err("%s: Failed to read VFSOC\n", __func__);
+		return -1;
+	}
+
+	return (int)data[1];
 }
 
 static int fg_read_soc(void)
@@ -363,23 +350,10 @@ static int fg_read_soc(void)
 	soc = data[1];
 
 	if (!(chip->info.pr_cnt % PRINT_COUNT))
-		pr_info("%s: SOC(%d), data(0x%04x)\n", __func__,
-				soc, (data[1]<<8) | data[0]);
+		pr_info("%s: soc(%d, 0x%04x), vfsoc(%d)\n", __func__,
+				soc, (data[1]<<8) | data[0], fg_read_vfsoc());
 
 	return soc;
-}
-
-static int fg_read_vfsoc(void)
-{
-	struct i2c_client *client = fg_i2c_client;
-	u8 data[2];
-
-	if (fg_i2c_read(client, VFSOC_REG, data, 2) < 0) {
-		pr_err("%s: Failed to read VFSOC\n", __func__);
-		return -1;
-	}
-
-	return (int)data[1];
 }
 
 static int fg_read_current(void)
@@ -424,10 +398,11 @@ static int fg_read_current(void)
 		avg_current *= -1;
 
 	if (!(chip->info.pr_cnt++ % PRINT_COUNT)) {
-		fg_test_print();
-		pr_info("%s: CURRENT(%dmA), AVG_CURRENT(%dmA)\n", __func__,
+		pr_info("%s: curr(%d), avg_curr(%dmA)\n", __func__,
 				i_current, avg_current);
 		chip->info.pr_cnt = 1;
+
+		fg_debug_print();
 		/* Read max17042's all registers every 5 minute. */
 		fg_periodic_read();
 	}
@@ -593,8 +568,9 @@ void fg_low_batt_compensation(u32 level)
 
 void fg_periodic_read(void)
 {
+	u8 reg;
 	int i;
-	u16 data[0x10];
+	int data[0x10];
 	struct timespec ts;
 	struct rtc_time tm;
 
@@ -602,21 +578,21 @@ void fg_periodic_read(void)
 	rtc_time_to_tm(ts.tv_sec, &tm);
 
 	pr_info("[MAX17042] %d/%d/%d %02d:%02d,",
-		tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900, tm.tm_hour,
-		tm.tm_min);
+		tm.tm_mday, tm.tm_mon + 1, tm.tm_year + 1900,
+		tm.tm_hour, tm.tm_min);
 
 	for (i = 0; i < 16; i++) {
-		fg_read_16register(i, data);
+		for (reg = 0; reg < 0x10; reg++)
+			data[reg] = fg_read_register(reg + i * 0x10);
 
-		pr_info("%04xh,%04xh,%04xh,%04xh,%04xh,%04xh,%04xh,%04xh,",
+		pr_info("%04xh,%04xh,%04xh,%04xh,%04xh,%04xh,%04xh,%04xh,\n"
+			"%04xh,%04xh,%04xh,%04xh,%04xh,%04xh,%04xh,%04xh,",
 			data[0x00], data[0x01], data[0x02], data[0x03],
-			data[0x04], data[0x05], data[0x06], data[0x07]);
-		pr_info("%04xh,%04xh,%04xh,%04xh,%04xh,%04xh,%04xh,%04xh,",
+			data[0x04], data[0x05], data[0x06], data[0x07],
 			data[0x08], data[0x09], data[0x0a], data[0x0b],
 			data[0x0c], data[0x0d], data[0x0e], data[0x0f]);
 		if (i == 4)
 			i = 13;
-
 		msleep(20);
 	}
 	pr_info("\n");
@@ -1114,7 +1090,7 @@ void prevent_early_late_poweroff(int vcell, int *fg_soc)
 		return;
 
 	avg_vcell = fg_read_avg_vcell();
-	pr_info("%s: soc=%d%%(0x%04x), vcell=%d avg_vcell=%d\n",
+	pr_info("%s: soc(%d%%(0x%04x)), v(%d), avg_v(%d)\n",
 			__func__, repsoc, repsoc_data, vcell, avg_vcell);
 
 	if (vcell > POWER_OFF_VOLTAGE_HIGH_MARGIN) {
@@ -1123,8 +1099,8 @@ void prevent_early_late_poweroff(int vcell, int *fg_soc)
 		fg_write_register(REMCAP_REP_REG, (u16)(read_val * 13 / 1000));
 		msleep(200);
 		*fg_soc = fg_read_soc();
-		pr_info("%s: new soc=%d, vcell=%d, avg_vcell=%d\n",
-				__func__, *fg_soc, vcell, avg_vcell);
+		pr_info("%s: 1.3%% case: new soc(%d), v(%d), avg_v(%d)\n",
+					__func__, *fg_soc, vcell, avg_vcell);
 	} else if ((vcell < POWER_OFF_VOLTAGE_NOW_LOW_MARGIN) &&
 		(avg_vcell < POWER_OFF_VOLTAGE_AVG_LOW_MARGIN)) {
 		read_val = fg_read_register(FULLCAP_REG);
@@ -1132,8 +1108,8 @@ void prevent_early_late_poweroff(int vcell, int *fg_soc)
 		fg_write_register(REMCAP_REP_REG, (u16)(read_val * 9 / 1000));
 		msleep(200);
 		*fg_soc = fg_read_soc();
-		pr_info("%s: new soc=%d, vcell=%d, avg_vcell=%d\n",
-				__func__, *fg_soc, vcell, avg_vcell);
+		pr_info("%s: 0%% case: new soc(%d), v(%d), avg_v(%d)\n",
+					__func__, *fg_soc, vcell, avg_vcell);
 	}
 }
 
@@ -1467,7 +1443,7 @@ static void fg_set_battery_type(void)
 	else if ((data == chip->pdata->atl_vfcapacity) || \
 			(data == chip->pdata->atl_vfcapacity-1))
 		chip->info.battery_type = ATL_BATTERY_TYPE;
-	else if ((data == chip->pdata->atl_vfcapacity) || \
+	else if ((data == chip->pdata->byd_vfcapacity) || \
 			(data == chip->pdata->byd_vfcapacity-1))
 		chip->info.battery_type = BYD_BATTERY_TYPE;
 	else {
@@ -1585,7 +1561,7 @@ int get_fuelgauge_value(int data)
 		break;
 
 	case FG_VOLTAGE_NOW:
-		ret = fg_read_voltage_now();
+		ret = fg_read_vcell();
 		break;
 
 	default:

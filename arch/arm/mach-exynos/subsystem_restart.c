@@ -63,7 +63,7 @@ struct restart_log {
 };
 
 static int restart_level;
-static int enable_ramdumps = 1;
+static int mdm_dump = 1;
 struct workqueue_struct *ssr_wq;
 
 static LIST_HEAD(restart_log_list);
@@ -122,7 +122,7 @@ static struct subsys_soc_restart_order *restart_orders_8960[] = {
 static struct subsys_soc_restart_order **restart_orders;
 static int n_restart_orders;
 
-module_param(enable_ramdumps, int, S_IRUGO | S_IWUSR);
+module_param(mdm_dump, int, S_IRUGO | S_IWUSR);
 
 static struct subsys_soc_restart_order *_update_restart_order(
 		struct subsys_data *subsys);
@@ -417,8 +417,7 @@ static void subsystem_restart_wq_func(struct work_struct *work)
 			continue;
 
 		if (restart_list[i]->ramdump)
-			if (restart_list[i]->ramdump(enable_ramdumps,
-							subsys) < 0)
+			if (restart_list[i]->ramdump(mdm_dump, subsys) < 0)
 				pr_warn("%s[%p]: Ramdump failed.\n",
 						restart_list[i]->name, current);
 	}

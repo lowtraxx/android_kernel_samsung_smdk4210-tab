@@ -121,9 +121,9 @@ struct lcd_info {
 #endif
 	unsigned int			irq;
 	unsigned int			connected;
-};
 
-static struct mipi_ddi_platform_data *ddi_pd;
+	struct dsim_global		*dsim;
+};
 
 #ifdef CONFIG_AID_DIMMING
 static const unsigned int candela_table[GAMMA_MAX] = {
@@ -199,9 +199,9 @@ static void hs_clk_re_try_work(struct work_struct *work)
 			count_dsim++;
 			set_dsim_hs_clk_toggle_count(15);
 		} else
-			s5p_dsim_frame_done_interrupt_enable(0);
+			set_dsim_hs_clk_toggle_count(0);
 	} else
-		s5p_dsim_frame_done_interrupt_enable(0);
+		set_dsim_hs_clk_toggle_count(0);
 }
 
 static irqreturn_t oled_det_int(int irq, void *dev_id)
@@ -231,14 +231,11 @@ static int s6e63m0_write(struct lcd_info *lcd,
 	wbuf = seq;
 
 	if (size == 1)
-		ddi_pd->cmd_write(ddi_pd->dsim_base,
-				DCS_WR_NO_PARA, wbuf[0], 0);
+		lcd->dsim->ops->cmd_write(lcd->dsim, DCS_WR_NO_PARA, wbuf[0], 0);
 	else if (size == 2)
-		ddi_pd->cmd_write(ddi_pd->dsim_base,
-				DCS_WR_1_PARA, wbuf[0], wbuf[1]);
+		lcd->dsim->ops->cmd_write(lcd->dsim, DCS_WR_1_PARA, wbuf[0], wbuf[1]);
 	else
-		ddi_pd->cmd_write(ddi_pd->dsim_base, DCS_LONG_WR,
-				(unsigned int)wbuf, size);
+		lcd->dsim->ops->cmd_write(lcd->dsim, DCS_LONG_WR, (unsigned int)wbuf, size);
 
 	mutex_unlock(&lcd->lock);
 
@@ -255,43 +252,12 @@ static int _s6e63m0_read(struct lcd_info *lcd, const u8 addr,
 
 	mutex_lock(&lcd->lock);
 
-	if (ddi_pd->cmd_read)
-		ret = ddi_pd->cmd_read(ddi_pd->dsim_base,
-						 addr, count, buf);
+	if (lcd->dsim->ops->cmd_read)
+		ret = lcd->dsim->ops->cmd_read(lcd->dsim, addr, count, buf);
 
 	mutex_unlock(&lcd->lock);
 
 	return ret;
-}
-
-static int s6e63m0_set_link(void *pd, unsigned int dsim_base,
-		unsigned char (*cmd_write) (unsigned int dsim_base,
-		unsigned int data0, unsigned int data1, unsigned int data2),
-	int (*cmd_read) (u32 reg_base, u8 addr, u16 count, u8 *buf))
-{
-	struct mipi_ddi_platform_data *temp_pd = NULL;
-
-	temp_pd = (struct mipi_ddi_platform_data *) pd;
-	if (temp_pd == NULL) {
-		printk(KERN_ERR "mipi_ddi_platform_data is null.\n");
-		return -EPERM;
-	}
-
-	ddi_pd = temp_pd;
-
-	ddi_pd->dsim_base = dsim_base;
-
-	if (cmd_write)
-		ddi_pd->cmd_write = cmd_write;
-	else
-		printk(KERN_WARNING "cmd_write function is null.\n");
-
-	if (cmd_read)
-		ddi_pd->cmd_read = cmd_read;
-	else
-		printk(KERN_WARNING "cmd_read function is null.\n");
-
-	return 0;
 }
 
 static int s6e63m0_read(struct lcd_info *lcd, const u8 addr,
@@ -462,7 +428,7 @@ static int get_backlight_level_from_brightness(int brightness)
 
 static int s6e63m0_gamma_ctl(struct lcd_info *lcd)
 {
-#if defined(CONFIG_MACH_M0_GRANDECTC)	/* W2013 gamma 300cd */
+#if defined(CONFIG_MACH_M0_GRANDECTC) || defined(CONFIG_MACH_IRON)
 	s6e63m0_write(lcd, SEQ_GAMMA_CONDITION_SET,
 				ARRAY_SIZE(SEQ_GAMMA_CONDITION_SET));
 #else
@@ -598,7 +564,7 @@ acl_err:
 #else
 static int s6e63m0_set_acl(struct lcd_info *lcd)
 {
-#if !defined(CONFIG_MACH_M0_GRANDECTC)
+#if !defined(CONFIG_MACH_M0_GRANDECTC) && !defined(CONFIG_MACH_IRON)
 	if (lcd->acl_enable) {
 		if (lcd->cur_acl == 0) {
 			if (lcd->bl == 0 || lcd->bl == 1) {
@@ -1037,7 +1003,7 @@ static int s6e63m0_ldi_init(struct lcd_info *lcd)
 {
 	int ret = 0;
 
-#if defined(CONFIG_MACH_M0_GRANDECTC)	/* W2013 */
+#if defined(CONFIG_MACH_M0_GRANDECTC) || defined(CONFIG_MACH_IRON)
 	mdelay(25);	/* 25ms	*/
 	s6e63m0_write(lcd, SEQ_SW_RESET,
 				ARRAY_SIZE(SEQ_SW_RESET));	/* SW Reset */
@@ -1063,7 +1029,7 @@ static int s6e63m0_ldi_init(struct lcd_info *lcd)
 				ARRAY_SIZE(SEQ_ETC_SOURCE_CONTROL));
 	s6e63m0_write(lcd, SEQ_ETC_CONTROL_B3h,
 				ARRAY_SIZE(SEQ_ETC_CONTROL_B3h));
-#if !defined(CONFIG_MACH_M0_GRANDECTC)
+#if !defined(CONFIG_MACH_M0_GRANDECTC) && !defined(CONFIG_MACH_IRON)
 	s6e63m0_write(lcd, SEQ_ETC_CONTROL_B5h,
 				ARRAY_SIZE(SEQ_ETC_CONTROL_B5h));
 	s6e63m0_write(lcd, SEQ_ETC_CONTROL_B6h,
@@ -1427,6 +1393,8 @@ void s6e63m0_early_suspend(void)
 {
 	struct lcd_info *lcd = g_lcd;
 
+	set_dsim_lcd_enabled(0);
+
 	dev_info(&lcd->ld->dev, "+%s\n", __func__);
 #if defined(GPIO_OLED_DET)
 	disable_irq(lcd->irq);
@@ -1455,10 +1423,35 @@ void s6e63m0_late_resume(void)
 #endif
 	dev_info(&lcd->ld->dev, "-%s\n", __func__);
 
-	set_dsim_lcd_enabled();
+	set_dsim_lcd_enabled(1);
 
 	return ;
 }
+#endif
+
+#ifdef CONFIG_INPUT_FLIP
+void samsung_switching_lcd_suspend(int init, int flip)
+{
+	pr_info("%s:  flip %s\n", __func__, (flip) ? "OPEN" : "CLOSE");
+	s6e63m0_early_suspend();/*LCD suspend*/
+	s5p_dsim_early_suspend();/*MIPI suspend*/
+}
+EXPORT_SYMBOL(samsung_switching_lcd_suspend);
+
+void samsung_switching_lcd_resume(int init, int flip)
+{
+	pr_info("%s:  flip %s\n", __func__, (flip) ? "OPEN" : "CLOSE");
+	s5p_dsim_late_resume();/*MIPI wakeup*/
+	if (s5p_dsim_fifo_clear() == 0) {
+		s5p_dsim_early_suspend();
+		msleep(10);
+		s5p_dsim_late_resume();
+		if (s5p_dsim_fifo_clear() == 0)
+			pr_info("dsim resume fail!!!\n");
+	}
+	s6e63m0_late_resume();/*LCD wakeup*/
+}
+EXPORT_SYMBOL(samsung_switching_lcd_resume);
 #endif
 
 static void s6e63m0_read_id(struct lcd_info *lcd, u8 *buf)
@@ -1554,6 +1547,7 @@ static int s6e63m0_probe(struct device *dev)
 	}
 
 	lcd->dev = dev;
+	lcd->dsim = (struct dsim_global *)dev_get_drvdata(dev->parent);
 	lcd->bd->props.max_brightness = MAX_BRIGHTNESS;
 	lcd->bd->props.brightness = DEFAULT_BRIGHTNESS;
 	lcd->bl = DEFAULT_GAMMA_LEVEL;
@@ -1591,7 +1585,7 @@ static int s6e63m0_probe(struct device *dev)
 
 	mutex_init(&lcd->lock);
 	mutex_init(&lcd->bl_lock);
-#if !defined(CONFIG_MACH_M0_GRANDECTC)
+#if !defined(CONFIG_MACH_M0_GRANDECTC) && !defined(CONFIG_MACH_IRON)
 	s6e63m0_read_id(lcd, lcd->id);
 
 	dev_info(&lcd->ld->dev, "ID: %x, %x, %x\n", lcd->id[0],
@@ -1601,12 +1595,12 @@ static int s6e63m0_probe(struct device *dev)
 	dev_info(&lcd->ld->dev, "s6e63m0 lcd panel driver has been probed.\n");
 
 #ifdef SMART_DIMMING
-#if !defined(CONFIG_MACH_M0_GRANDECTC)
+#if !defined(CONFIG_MACH_M0_GRANDECTC) && !defined(CONFIG_MACH_IRON)
 	s6e63m0_check_id(lcd, lcd->id);
 #endif
 
 	init_table_info(&lcd->smart);
-#if !defined(CONFIG_MACH_M0_GRANDECTC)
+#if !defined(CONFIG_MACH_M0_GRANDECTC) && !defined(CONFIG_MACH_IRON)
 	ret = s6e63m0_read_mtp(lcd, mtp_data);
 	if (!ret) {
 		printk(KERN_ERR "[LCD:ERROR] : %s read mtp failed\n", __func__);
@@ -1622,7 +1616,7 @@ static int s6e63m0_probe(struct device *dev)
 	ret = init_gamma_table(lcd);
 
 #ifdef CONFIG_AID_DIMMING
-#if !defined(CONFIG_MACH_M0_GRANDECTC)
+#if !defined(CONFIG_MACH_M0_GRANDECTC) && !defined(CONFIG_MACH_IRON)
 	if (lcd->id[1] == 0x20) {
 		printk(KERN_INFO "AID Dimming is started\n");
 		lcd->support_aid = 1;
@@ -1693,7 +1687,6 @@ static void s6e63m0_shutdown(struct device *dev)
 
 static struct mipi_lcd_driver s6e63m0_mipi_driver = {
 	.name = "s6e63m0",
-	.set_link		= s6e63m0_set_link,
 	.probe			= s6e63m0_probe,
 	.remove			= __devexit_p(s6e63m0_remove),
 	.shutdown		= s6e63m0_shutdown,

@@ -378,62 +378,104 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
 			mmc_card_set_blockaddr(card);
 	}
 	card->ext_csd.raw_card_type = ext_csd[EXT_CSD_CARD_TYPE];
-	switch (ext_csd[EXT_CSD_CARD_TYPE] & EXT_CSD_CARD_TYPE_MASK) {
-	case EXT_CSD_CARD_TYPE_SDR_ALL:
-	case EXT_CSD_CARD_TYPE_SDR_ALL_DDR_1_8V:
-	case EXT_CSD_CARD_TYPE_SDR_ALL_DDR_1_2V:
-	case EXT_CSD_CARD_TYPE_SDR_ALL_DDR_52:
-		card->ext_csd.hs_max_dtr = 200000000;
-		card->ext_csd.card_type = EXT_CSD_CARD_TYPE_SDR_200;
-		break;
-	case EXT_CSD_CARD_TYPE_SDR_1_2V_ALL:
-	case EXT_CSD_CARD_TYPE_SDR_1_2V_DDR_1_8V:
-	case EXT_CSD_CARD_TYPE_SDR_1_2V_DDR_1_2V:
-	case EXT_CSD_CARD_TYPE_SDR_1_2V_DDR_52:
-		card->ext_csd.hs_max_dtr = 200000000;
-		card->ext_csd.card_type = EXT_CSD_CARD_TYPE_SDR_1_2V;
-		break;
-	case EXT_CSD_CARD_TYPE_SDR_1_8V_ALL:
-	case EXT_CSD_CARD_TYPE_SDR_1_8V_DDR_1_8V:
-	case EXT_CSD_CARD_TYPE_SDR_1_8V_DDR_1_2V:
-	case EXT_CSD_CARD_TYPE_SDR_1_8V_DDR_52:
-		card->ext_csd.hs_max_dtr = 200000000;
-		card->ext_csd.card_type = EXT_CSD_CARD_TYPE_SDR_1_8V;
-		break;
-	case EXT_CSD_CARD_TYPE_DDR_52 | EXT_CSD_CARD_TYPE_52 |
-	     EXT_CSD_CARD_TYPE_26:
-		card->ext_csd.hs_max_dtr = 52000000;
-		card->ext_csd.card_type = EXT_CSD_CARD_TYPE_DDR_52;
-		break;
-	case EXT_CSD_CARD_TYPE_DDR_1_2V | EXT_CSD_CARD_TYPE_52 |
-	     EXT_CSD_CARD_TYPE_26:
-		card->ext_csd.hs_max_dtr = 52000000;
-		card->ext_csd.card_type = EXT_CSD_CARD_TYPE_DDR_1_2V;
-		break;
-	case EXT_CSD_CARD_TYPE_DDR_1_8V | EXT_CSD_CARD_TYPE_52 |
-	     EXT_CSD_CARD_TYPE_26:
-		card->ext_csd.hs_max_dtr = 52000000;
-		card->ext_csd.card_type = EXT_CSD_CARD_TYPE_DDR_1_8V;
-		break;
-	case EXT_CSD_CARD_TYPE_52 | EXT_CSD_CARD_TYPE_26:
-		card->ext_csd.hs_max_dtr = 52000000;
-		break;
-	case EXT_CSD_CARD_TYPE_26:
-		card->ext_csd.hs_max_dtr = 26000000;
-		break;
-	default:
+	if (card->host->caps2 & MMC_CAP2_HS200) {
+		switch (ext_csd[EXT_CSD_CARD_TYPE] & EXT_CSD_CARD_TYPE_MASK) {
+		case EXT_CSD_CARD_TYPE_SDR_ALL:
+		case EXT_CSD_CARD_TYPE_SDR_ALL_DDR_1_8V:
+		case EXT_CSD_CARD_TYPE_SDR_ALL_DDR_1_2V:
+		case EXT_CSD_CARD_TYPE_SDR_ALL_DDR_52:
+			card->ext_csd.hs_max_dtr = 200000000;
+			card->ext_csd.card_type = EXT_CSD_CARD_TYPE_SDR_200;
+			break;
+		case EXT_CSD_CARD_TYPE_SDR_1_2V_ALL:
+		case EXT_CSD_CARD_TYPE_SDR_1_2V_DDR_1_8V:
+		case EXT_CSD_CARD_TYPE_SDR_1_2V_DDR_1_2V:
+		case EXT_CSD_CARD_TYPE_SDR_1_2V_DDR_52:
+			card->ext_csd.hs_max_dtr = 200000000;
+			card->ext_csd.card_type = EXT_CSD_CARD_TYPE_SDR_1_2V;
+			break;
+		case EXT_CSD_CARD_TYPE_SDR_1_8V_ALL:
+		case EXT_CSD_CARD_TYPE_SDR_1_8V_DDR_1_8V:
+		case EXT_CSD_CARD_TYPE_SDR_1_8V_DDR_1_2V:
+		case EXT_CSD_CARD_TYPE_SDR_1_8V_DDR_52:
+			card->ext_csd.hs_max_dtr = 200000000;
+			card->ext_csd.card_type = EXT_CSD_CARD_TYPE_SDR_1_8V;
+			break;
+		case EXT_CSD_CARD_TYPE_DDR_52 | EXT_CSD_CARD_TYPE_52 |
+		     EXT_CSD_CARD_TYPE_26:
+			card->ext_csd.hs_max_dtr = 52000000;
+			card->ext_csd.card_type = EXT_CSD_CARD_TYPE_DDR_52;
+			break;
+		case EXT_CSD_CARD_TYPE_DDR_1_2V | EXT_CSD_CARD_TYPE_52 |
+		     EXT_CSD_CARD_TYPE_26:
+			card->ext_csd.hs_max_dtr = 52000000;
+			card->ext_csd.card_type = EXT_CSD_CARD_TYPE_DDR_1_2V;
+			break;
+		case EXT_CSD_CARD_TYPE_DDR_1_8V | EXT_CSD_CARD_TYPE_52 |
+		     EXT_CSD_CARD_TYPE_26:
+			card->ext_csd.hs_max_dtr = 52000000;
+			card->ext_csd.card_type = EXT_CSD_CARD_TYPE_DDR_1_8V;
+			break;
+		case EXT_CSD_CARD_TYPE_52 | EXT_CSD_CARD_TYPE_26:
+			card->ext_csd.hs_max_dtr = 52000000;
+			break;
+		case EXT_CSD_CARD_TYPE_26:
+			card->ext_csd.hs_max_dtr = 26000000;
+			break;
+		default:
 #if defined(MMC_CHECK_EXT_CSD)
-		/* For debugging about ext_csd register value */
-		mmc_error_ext_csd(card, ext_csd, 0, EXT_CSD_CARD_TYPE);
+			/* For debugging about ext_csd register value */
+			mmc_error_ext_csd(card, ext_csd, 0, EXT_CSD_CARD_TYPE);
 #endif
-		/* MMC v4 spec says this cannot happen */
-		printk(KERN_WARNING "%s: card is mmc v4 but doesn't "
-			"support any high-speed modes.\n",
-			mmc_hostname(card->host));
+			/* MMC v4 spec says this cannot happen */
+			printk(KERN_WARNING "%s: card is mmc v4 but doesn't "
+					"support any high-speed modes.\n",
+					mmc_hostname(card->host));
 #if defined(MMC_RETRY_READ_EXT_CSD)
-		err = -EINVAL;
-		goto out;
+			err = -EINVAL;
+			goto out;
 #endif
+		}
+	} else {
+		pr_debug("%s: Ignore device type HS200.\n",
+				mmc_hostname(card->host));
+		switch (ext_csd[EXT_CSD_CARD_TYPE] &
+				EXT_CSD_CARD_TYPE_NO_HS200_MASK) {
+		case EXT_CSD_CARD_TYPE_DDR_52 | EXT_CSD_CARD_TYPE_52 |
+		     EXT_CSD_CARD_TYPE_26:
+			card->ext_csd.hs_max_dtr = 52000000;
+			card->ext_csd.card_type = EXT_CSD_CARD_TYPE_DDR_52;
+			break;
+		case EXT_CSD_CARD_TYPE_DDR_1_2V | EXT_CSD_CARD_TYPE_52 |
+		     EXT_CSD_CARD_TYPE_26:
+			card->ext_csd.hs_max_dtr = 52000000;
+			card->ext_csd.card_type = EXT_CSD_CARD_TYPE_DDR_1_2V;
+			break;
+		case EXT_CSD_CARD_TYPE_DDR_1_8V | EXT_CSD_CARD_TYPE_52 |
+		     EXT_CSD_CARD_TYPE_26:
+			card->ext_csd.hs_max_dtr = 52000000;
+			card->ext_csd.card_type = EXT_CSD_CARD_TYPE_DDR_1_8V;
+			break;
+		case EXT_CSD_CARD_TYPE_52 | EXT_CSD_CARD_TYPE_26:
+			card->ext_csd.hs_max_dtr = 52000000;
+			break;
+		case EXT_CSD_CARD_TYPE_26:
+			card->ext_csd.hs_max_dtr = 26000000;
+			break;
+		default:
+#if defined(MMC_CHECK_EXT_CSD)
+			/* For debugging about ext_csd register value */
+			mmc_error_ext_csd(card, ext_csd, 0, EXT_CSD_CARD_TYPE);
+#endif
+			/* MMC v4 spec says this cannot happen */
+			printk(KERN_WARNING "%s: card is mmc v4 but doesn't "
+					"support any high-speed modes.\n",
+					mmc_hostname(card->host));
+#if defined(MMC_RETRY_READ_EXT_CSD)
+			err = -EINVAL;
+			goto out;
+#endif
+		}
 	}
 
 	card->ext_csd.raw_s_a_timeout = ext_csd[EXT_CSD_S_A_TIMEOUT];

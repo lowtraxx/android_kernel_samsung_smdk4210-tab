@@ -36,6 +36,13 @@ unsigned char *firmware_name = "epen/W8501.bin";
 /* checksum for 0x340 */
 const char Firmware_checksum[] = { 0x1F, 0xee, 0x06, 0x4b, 0xdd, };
 
+#elif defined(CONFIG_MACH_T0)
+const unsigned int Binary_nLength = 0xEFFF;
+const unsigned char Mpu_type = 0x28;
+unsigned int Firmware_version_of_file = 0x15;
+unsigned char *firmware_name = "epen/W9001.bin";
+
+const char Firmware_checksum[] = { 0x1F, 0x78, 0xEF, 0xED, 0x41, };
 #endif
 
 void wacom_i2c_set_firm_data(unsigned char *Binary_new)
@@ -43,7 +50,7 @@ void wacom_i2c_set_firm_data(unsigned char *Binary_new)
 	if (Binary_new == NULL) {
 #if defined(CONFIG_MACH_P4NOTE)
 		Binary = (unsigned char *)Binary_48;
-#elif defined(CONFIG_MACH_Q1_BD)
+#elif defined(CONFIG_MACH_Q1_BD) || defined(CONFIG_MACH_T0)
 		Binary = NULL;
 #endif
 		return;
@@ -68,5 +75,7 @@ void wacom_i2c_init_firm_data(void)
 	} else
 		printk(KERN_DEBUG
 		       "[E-PEN] Wacom driver is working for 4.4mm pitch pad.\n");
+#else
+	Binary = NULL;
 #endif
 }

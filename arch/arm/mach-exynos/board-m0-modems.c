@@ -396,6 +396,7 @@ static void umts_modem_cfg_gpio(void)
 		gpio_direction_output(GPIO_SUSPEND_REQUEST, 0);
 		s3c_gpio_setpull(GPIO_SUSPEND_REQUEST, S3C_GPIO_PULL_NONE);
 	}
+#if !defined(CONFIG_MACH_T0)
 	err = gpio_request(GPIO_GPS_CNTL, "GPS_CNTL");
 	if (err)
 		pr_err(LOG_TAG "fail to request gpio %s : %d\n", "GPS_CNTL",
@@ -404,6 +405,7 @@ static void umts_modem_cfg_gpio(void)
 		gpio_direction_output(GPIO_GPS_CNTL, 0);
 		s3c_gpio_setpull(GPIO_GPS_CNTL, S3C_GPIO_PULL_NONE);
 	}
+#endif /* !defined(CONFIG_MACH_T0) */
 
 	pr_info(LOG_TAG "umts_modem_cfg_gpio done\n");
 }

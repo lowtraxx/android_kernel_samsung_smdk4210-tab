@@ -490,7 +490,9 @@ static int sec_sysfs_check_cmd(u8 *buf,
 			printk(KERN_DEBUG
 				"[TSP] param[%u] : %s\n",
 				cnt2, tmp);
-			if (!kstrtouint(tmp, 10, &param[cnt2]))
+			if (kstrtouint(tmp, 10, &param[cnt2]))
+				cmd = CMD_LIST_MAX;
+			else
 				cnt2++;
 			kfree(tmp);
 			start = cnt + 1;
@@ -606,8 +608,12 @@ static void sec_sysfs_cmd(struct synaptics_drv_data *data,
 		break;
 
 	case CMD_LIST_READ_REF:
+		synaptics_ts_write_data(data,
+			0xf0, 0x01);
 		data->cmd_report_type = REPORT_TYPE_RAW_CAP;
 		check_diagnostics_mode(data);
+		synaptics_ts_write_data(data,
+			0xf0, 0x00);
 		sec_sysfs_numstr(data->refer_min, buf2);
 		tmp_str[cnt++] = buf2;
 		tmp_str[cnt++] = ",";
@@ -631,28 +637,24 @@ static void sec_sysfs_cmd(struct synaptics_drv_data *data,
 		break;
 
 	case CMD_LIST_GET_REF:
-		data->cmd_report_type = REPORT_TYPE_RAW_CAP;
 		temp = get_value(data, param[0], param[1]);
 		sec_sysfs_numstr(temp, buf2);
 		tmp_str[cnt++] = buf2;
 		break;
 
 	case CMD_LIST_GET_RX:
-		data->cmd_report_type = REPORT_TYPE_RX_TO_RX;
 		temp = get_value(data, param[0], param[1]);
 		sec_sysfs_numstr(temp, buf2);
 		tmp_str[cnt++] = buf2;
 		break;
 
 	case CMD_LIST_GET_TX:
-		data->cmd_report_type = REPORT_TYPE_TX_TO_TX;
 		temp = get_value(data, param[0], param[1]);
 		sec_sysfs_numstr(temp, buf2);
 		tmp_str[cnt++] = buf2;
 		break;
 
 	case CMD_LIST_GET_TXG:
-		data->cmd_report_type = REPORT_TYPE_TX_TO_GND;
 		temp = get_value(data, param[0], param[1]);
 		sec_sysfs_numstr(temp, buf2);
 		tmp_str[cnt++] = buf2;

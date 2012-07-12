@@ -31,12 +31,14 @@
 #include <plat/gpio-cfg.h>
 #include <mach/regs-mem.h>
 #include <plat/regs-srom.h>
+#include <mach/cpufreq.h>
+#include <mach/dev.h>
+#include <linux/cpufreq_pegasusq.h>
 
 #ifdef CONFIG_USBHUB_USB3503
 #include <linux/i2c.h>
 #include <linux/i2c-gpio.h>
 #include <linux/platform_data/usb3503.h>
-#include <mach/cpufreq.h>
 #include <plat/usb-phy.h>
 #endif
 #include <plat/devs.h>
@@ -75,10 +77,14 @@ struct sromc_access_cfg {
 	u32 pmc;		/* Page Mode config			*/
 };
 
-/* For CMC221 IDPRAM (Internal DPRAM) */
-#define CMC_IDPRAM_SIZE		0x4000	/* 16 KB */
+#define RES_CP_ACTIVE_IRQ_ID	0
+#define RES_DPRAM_MEM_ID	1
+#define RES_DPRAM_IRQ_ID	2
 
-/* FOR CMC221 SFR for IDPRAM */
+/* For CMC221 IDPRAM (Internal DPRAM) */
+#define CMC_IDPRAM_SIZE		DPRAM_SIZE_16KB
+
+/* For CMC221 SFR for IDPRAM */
 #define CMC_INT2CP_REG		0x10	/* Interrupt to CP            */
 #define CMC_INT2AP_REG		0x50
 #define CMC_CLR_INT_REG		0x28	/* Clear Interrupt to AP      */
@@ -87,36 +93,17 @@ struct sromc_access_cfg {
 #define CMC_GET_REG		0x50	/* CP->AP reg for hostbooting */
 
 /* For CBP7.2 EDPRAM (External DPRAM) */
-#define CBP_EDPRAM_SIZE		0x4000	/* 16 KB */
-
-#define INT_MASK_REQ_ACK_F	0x0020
-#define INT_MASK_REQ_ACK_R	0x0010
-#define INT_MASK_RES_ACK_F	0x0008
-#define INT_MASK_RES_ACK_R	0x0004
-#define INT_MASK_SEND_F		0x0002
-#define INT_MASK_SEND_R		0x0001
-
-#define INT_MASK_REQ_ACK_RFS	0x0400 /* Request RES_ACK_RFS		*/
-#define INT_MASK_RES_ACK_RFS	0x0200 /* Response of REQ_ACK_RFS	*/
-#define INT_MASK_SEND_RFS	0x0100 /* Indicate sending RFS data	*/
-
+#define CBP_EDPRAM_SIZE		DPRAM_SIZE_16KB
 
 /* Function prototypes */
-static void config_dpram_port_gpio(void);
+static void config_dpram_port_gpio(int addr_bits);
 static void init_sromc(void);
 static void setup_sromc(unsigned csn, struct sromc_cfg *cfg,
 		struct sromc_access_cfg *acc_cfg);
 static void setup_dpram_speed(unsigned csn, struct sromc_access_cfg *acc_cfg);
 static int __init init_modem(void);
 
-#ifdef CONFIG_USBHUB_USB3503
 static int host_port_enable(int port, int enable);
-#else
-static int host_port_enable(int port, int enable)
-{
-	return s5p_ehci_port_control(&s5p_device_ehci, port, enable);
-}
-#endif
 
 #ifdef CONFIG_LTE_MODEM_CMC221
 static struct sromc_cfg cmc_idpram_cfg = {
@@ -157,57 +144,6 @@ static struct sromc_access_cfg cmc_idpram_access_cfg[] = {
 	},
 };
 
-/*
-	magic_code +
-	access_enable +
-	fmt_tx_head + fmt_tx_tail + fmt_tx_buff +
-	raw_tx_head + raw_tx_tail + raw_tx_buff +
-	fmt_rx_head + fmt_rx_tail + fmt_rx_buff +
-	raw_rx_head + raw_rx_tail + raw_rx_buff +
-	mbx_cp2ap +
-	mbx_ap2cp
- =	2 +
-	2 +
-	2 + 2 + 1336 +
-	2 + 2 + 4564 +
-	2 + 2 + 1336 +
-	2 + 2 + 9124 +
-	2 +
-	2
- =	16384
-*/
-
-#define DP_FMT_TX_BUFF_SZ	1336
-#define DP_RAW_TX_BUFF_SZ	4564
-#define DP_FMT_RX_BUFF_SZ	1336
-#define DP_RAW_RX_BUFF_SZ	9124
-
-#define MAX_CMC_IDPRAM_IPC_DEV	(IPC_RAW + 1)	/* FMT, RAW */
-
-struct dpram_ipc_cfg {
-	u16 magic;
-	u16 access;
-
-	u16 fmt_tx_head;
-	u16 fmt_tx_tail;
-	u8  fmt_tx_buff[DP_FMT_TX_BUFF_SZ];
-
-	u16 raw_tx_head;
-	u16 raw_tx_tail;
-	u8  raw_tx_buff[DP_RAW_TX_BUFF_SZ];
-
-	u16 fmt_rx_head;
-	u16 fmt_rx_tail;
-	u8  fmt_rx_buff[DP_FMT_RX_BUFF_SZ];
-
-	u16 raw_rx_head;
-	u16 raw_rx_tail;
-	u8  raw_rx_buff[DP_RAW_RX_BUFF_SZ];
-
-	u16 mbx_cp2ap;
-	u16 mbx_ap2cp;
-};
-
 struct cmc221_idpram_sfr {
 	u16 __iomem *int2cp;
 	u16 __iomem *int2ap;
@@ -217,92 +153,65 @@ struct cmc221_idpram_sfr {
 	u16 __iomem *msg2ap;
 };
 
-static struct dpram_ipc_map cmc_ipc_map;
 static u8 *cmc_sfr_base;
 static struct cmc221_idpram_sfr cmc_sfr;
 
-/* Function prototypes */
-static void cmc_idpram_reset(void);
-static void cmc_idpram_setup_speed(enum dpram_speed);
-static int  cmc_idpram_wakeup(void);
+static void cmc_idpram_reset(void)
+{
+	iowrite16(1, cmc_sfr.reset);
+}
+
+static void cmc_idpram_clr_intr(void)
+{
+	iowrite16(0xFFFF, cmc_sfr.clr_int2ap);
+	iowrite16(0, cmc_sfr.int2ap);
+}
+
+static u16 cmc_idpram_recv_intr(void)
+{
+	return ioread16(cmc_sfr.int2ap);
+}
+
+static void cmc_idpram_send_intr(u16 irq_mask)
+{
+	iowrite16(irq_mask, cmc_sfr.int2cp);
+}
+
+static u16 cmc_idpram_recv_msg(void)
+{
+	return ioread16(cmc_sfr.msg2ap);
+}
+
+static void cmc_idpram_send_msg(u16 msg)
+{
+	iowrite16(msg, cmc_sfr.msg2cp);
+}
+
+static int cmc_idpram_wakeup(void);
+
 static void cmc_idpram_sleep(void);
-static void cmc_idpram_clr_intr(void);
-static u16  cmc_idpram_recv_intr(void);
-static void cmc_idpram_send_intr(u16 irq_mask);
-static u16  cmc_idpram_recv_msg(void);
-static void cmc_idpram_send_msg(u16 msg);
 
-static u16  cmc_idpram_get_magic(void);
-static void cmc_idpram_set_magic(u16 value);
-static u16  cmc_idpram_get_access(void);
-static void cmc_idpram_set_access(u16 value);
-
-static u32  cmc_idpram_get_tx_head(int dev_id);
-static u32  cmc_idpram_get_tx_tail(int dev_id);
-static void cmc_idpram_set_tx_head(int dev_id, u32 head);
-static void cmc_idpram_set_tx_tail(int dev_id, u32 tail);
-static u8 __iomem *cmc_idpram_get_tx_buff(int dev_id);
-static u32  cmc_idpram_get_tx_buff_size(int dev_id);
-
-static u32  cmc_idpram_get_rx_head(int dev_id);
-static u32  cmc_idpram_get_rx_tail(int dev_id);
-static void cmc_idpram_set_rx_head(int dev_id, u32 head);
-static void cmc_idpram_set_rx_tail(int dev_id, u32 tail);
-static u8 __iomem *cmc_idpram_get_rx_buff(int dev_id);
-static u32  cmc_idpram_get_rx_buff_size(int dev_id);
-
-static u16  cmc_idpram_get_mask_req_ack(int dev_id);
-static u16  cmc_idpram_get_mask_res_ack(int dev_id);
-static u16  cmc_idpram_get_mask_send(int dev_id);
+static void cmc_idpram_setup_speed(enum dpram_speed speed)
+{
+	setup_dpram_speed(cmc_idpram_cfg.csn, &cmc_idpram_access_cfg[speed]);
+}
 
 static struct modemlink_dpram_control cmc_idpram_ctrl = {
 	.reset = cmc_idpram_reset,
+	.clear_intr = cmc_idpram_clr_intr,
+	.recv_intr = cmc_idpram_recv_intr,
+	.send_intr = cmc_idpram_send_intr,
+	.recv_msg = cmc_idpram_recv_msg,
+	.send_msg = cmc_idpram_send_msg,
+
+	.wakeup = cmc_idpram_wakeup,
+	.sleep = cmc_idpram_sleep,
 
 	.setup_speed = cmc_idpram_setup_speed,
 
-	.wakeup = cmc_idpram_wakeup,
-	.sleep  = cmc_idpram_sleep,
-
-	.clear_intr = cmc_idpram_clr_intr,
-	.recv_intr  = cmc_idpram_recv_intr,
-	.send_intr  = cmc_idpram_send_intr,
-	.recv_msg   = cmc_idpram_recv_msg,
-	.send_msg   = cmc_idpram_send_msg,
-
-	.get_magic  = cmc_idpram_get_magic,
-	.set_magic  = cmc_idpram_set_magic,
-	.get_access = cmc_idpram_get_access,
-	.set_access = cmc_idpram_set_access,
-
-	.get_tx_head = cmc_idpram_get_tx_head,
-	.get_tx_tail = cmc_idpram_get_tx_tail,
-	.set_tx_head = cmc_idpram_set_tx_head,
-	.set_tx_tail = cmc_idpram_set_tx_tail,
-	.get_tx_buff = cmc_idpram_get_tx_buff,
-	.get_tx_buff_size = cmc_idpram_get_tx_buff_size,
-
-	.get_rx_head = cmc_idpram_get_rx_head,
-	.get_rx_tail = cmc_idpram_get_rx_tail,
-	.set_rx_head = cmc_idpram_set_rx_head,
-	.set_rx_tail = cmc_idpram_set_rx_tail,
-	.get_rx_buff = cmc_idpram_get_rx_buff,
-	.get_rx_buff_size = cmc_idpram_get_rx_buff_size,
-
-	.get_mask_req_ack = cmc_idpram_get_mask_req_ack,
-	.get_mask_res_ack = cmc_idpram_get_mask_res_ack,
-	.get_mask_send    = cmc_idpram_get_mask_send,
-
-	.dp_base = NULL,
-	.dp_size = 0,
 	.dp_type = CP_IDPRAM,
-	.aligned = 1,
 
-	.dpram_irq = CMC_IDPRAM_INT_IRQ_00,
 	.dpram_irq_flags = (IRQF_NO_SUSPEND | IRQF_TRIGGER_RISING),
-	.dpram_irq_name = "CMC221_IDPRAM_IRQ",
-	.dpram_wlock_name = "CMC221_IDPRAM_WLOCK",
-
-	.max_ipc_dev = MAX_CMC_IDPRAM_IPC_DEV,
 };
 
 /*
@@ -413,6 +322,13 @@ static struct modem_io_t umts_io_devices[] = {
 		.links = LINKTYPE(LINKDEV_DPRAM),
 	},
 	[14] = {
+		.name = "umts_log",
+		.id = 0,
+		.format = IPC_RAMDUMP,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
+	[15] = {
 		.name = "lte_ipc0",
 		.id = 235,
 		.format = IPC_FMT,
@@ -421,8 +337,8 @@ static struct modem_io_t umts_io_devices[] = {
 	},
 };
 
-static int exynos_cpu_frequency_lock(void);
-static int exynos_cpu_frequency_unlock(void);
+static int exynos_frequency_lock(struct device *dev);
+static int exynos_frequency_unlock(struct device *dev);
 
 static struct modemlink_pm_data umts_link_pm_data = {
 	.name = "umts_link_pm",
@@ -437,13 +353,20 @@ static struct modemlink_pm_data umts_link_pm_data = {
 	.link_reconnect = umts_link_reconnect,
 */
 	.freqlock = ATOMIC_INIT(0),
-	.cpufreq_lock = exynos_cpu_frequency_lock,
-	.cpufreq_unlock = exynos_cpu_frequency_unlock,
+	.freq_lock = exynos_frequency_lock,
+	.freq_unlock = exynos_frequency_unlock,
 
 	.autosuspend_delay_ms = 2000,
 
 	.has_usbhub = true,
 };
+
+bool modem_using_hub(void)
+{
+	return umts_link_pm_data.has_usbhub;
+}
+
+static struct modemlink_pm_link_activectl active_ctl;
 
 static struct modem_data umts_modem_data = {
 	.name = "cmc221",
@@ -459,6 +382,7 @@ static struct modem_data umts_modem_data = {
 	.gpio_slave_wakeup = GPIO_IPC_SLAVE_WAKEUP,
 	.gpio_host_active = GPIO_ACTIVE_STATE,
 	.gpio_host_wakeup = GPIO_IPC_HOST_WAKEUP,
+	.gpio_dynamic_switching = GPIO_AP2CMC_INT2,
 
 	.modem_net = UMTS_NETWORK,
 	.modem_type = SEC_CMC221,
@@ -478,10 +402,22 @@ static struct modem_data umts_modem_data = {
 };
 
 static struct resource umts_modem_res[] = {
-	[0] = {
-		.name  = "cp_active_irq",
+	[RES_CP_ACTIVE_IRQ_ID] = {
+		.name = "cp_active_irq",
 		.start = LTE_ACTIVE_IRQ,
-		.end   = LTE_ACTIVE_IRQ,
+		.end = LTE_ACTIVE_IRQ,
+		.flags = IORESOURCE_IRQ,
+	},
+	[RES_DPRAM_MEM_ID] = {
+		.name = "dpram_base",
+		.start = SROM_CS0_BASE,
+		.end = SROM_CS0_BASE + (CMC_IDPRAM_SIZE - 1),
+		.flags = IORESOURCE_MEM,
+	},
+	[RES_DPRAM_IRQ_ID] = {
+		.name = "dpram_irq",
+		.start = CMC_IDPRAM_INT_IRQ_00,
+		.end = CMC_IDPRAM_INT_IRQ_00,
 		.flags = IORESOURCE_IRQ,
 	},
 };
@@ -496,7 +432,20 @@ static struct platform_device umts_modem = {
 	},
 };
 
-#define HUB_STATE_OFF 0
+void set_slave_wake(void)
+{
+	int hostwake = umts_link_pm_data.gpio_link_hostwake;
+	int slavewake = umts_link_pm_data.gpio_link_slavewake;
+
+	if (gpio_get_value(slavewake)) {
+		gpio_direction_output(slavewake, 0);
+		mif_info("> S-WUP 0\n");
+		mdelay(10);
+	}
+	gpio_direction_output(slavewake, 1);
+	mif_info("> S-WUP 1\n");
+}
+
 void set_hsic_lpa_states(int states)
 {
 	int val = gpio_get_value(umts_modem_data.gpio_cp_reset);
@@ -507,19 +456,22 @@ void set_hsic_lpa_states(int states)
 	if (val) {
 		switch (states) {
 		case STATE_HSIC_LPA_ENTER:
-			mif_info("usb3503: lpa_enter\n");
+			mif_info("lpa_enter\n");
+			/* gpio_link_active == gpio_host_active in C1 */
 			gpio_set_value(umts_modem_data.gpio_host_active, 0);
 			mif_info("> H-ACT %d\n", 0);
 			if (pm_data->hub_standby && pm_data->hub_pm_data)
 				pm_data->hub_standby(pm_data->hub_pm_data);
 			break;
 		case STATE_HSIC_LPA_WAKE:
-			mif_info("usb3503: lpa_wake\n");
+			mif_info("lpa_wake\n");
 			gpio_set_value(umts_modem_data.gpio_host_active, 1);
 			mif_info("> H-ACT %d\n", 1);
 			break;
 		case STATE_HSIC_LPA_PHY_INIT:
-			mif_info("usb3503: phy_init\n");
+			mif_info("lpa_phy_init\n");
+			if (!modem_using_hub() && active_ctl.gpio_initialized)
+				set_slave_wake();
 			break;
 		}
 	}
@@ -528,16 +480,6 @@ void set_hsic_lpa_states(int states)
 int get_cp_active_state(void)
 {
 	return gpio_get_value(umts_modem_data.gpio_phone_active);
-}
-
-static void cmc_idpram_reset(void)
-{
-	iowrite16(1, cmc_sfr.reset);
-}
-
-static void cmc_idpram_setup_speed(enum dpram_speed speed)
-{
-	setup_dpram_speed(cmc_idpram_cfg.csn, &cmc_idpram_access_cfg[speed]);
 }
 
 static int cmc_idpram_wakeup(void)
@@ -566,204 +508,24 @@ static void cmc_idpram_sleep(void)
 	gpio_set_value(umts_modem_data.gpio_dpram_wakeup, 0);
 }
 
-static void cmc_idpram_clr_intr(void)
-{
-	iowrite16(0xFFFF, cmc_sfr.clr_int2ap);
-	iowrite16(0, cmc_sfr.int2ap);
-}
-
-static u16 cmc_idpram_recv_intr(void)
-{
-	return ioread16(cmc_sfr.int2ap);
-}
-
-static void cmc_idpram_send_intr(u16 irq_mask)
-{
-	iowrite16(irq_mask, cmc_sfr.int2cp);
-}
-
-static u16 cmc_idpram_recv_msg(void)
-{
-	return ioread16(cmc_sfr.msg2ap);
-}
-
-static void cmc_idpram_send_msg(u16 msg)
-{
-	iowrite16(msg, cmc_sfr.msg2cp);
-}
-
-static u16 cmc_idpram_get_magic(void)
-{
-	return ioread16(cmc_ipc_map.magic);
-}
-
-static void cmc_idpram_set_magic(u16 value)
-{
-	iowrite16(value, cmc_ipc_map.magic);
-}
-
-static u16 cmc_idpram_get_access(void)
-{
-	return ioread16(cmc_ipc_map.access);
-}
-
-static void cmc_idpram_set_access(u16 value)
-{
-	iowrite16(value, cmc_ipc_map.access);
-}
-
-static u32 cmc_idpram_get_tx_head(int dev_id)
-{
-	return ioread16(cmc_ipc_map.dev[dev_id].txq.head);
-}
-
-static u32 cmc_idpram_get_tx_tail(int dev_id)
-{
-	return ioread16(cmc_ipc_map.dev[dev_id].txq.tail);
-}
-
-static void cmc_idpram_set_tx_head(int dev_id, u32 head)
-{
-	int cnt = 100;
-	u32 val = 0;
-
-	iowrite16((u16)head, cmc_ipc_map.dev[dev_id].txq.head);
-
-	do {
-		/* Check head value written */
-		val = ioread16(cmc_ipc_map.dev[dev_id].txq.head);
-		if (val == head)
-			break;
-
-		mif_err("ERR: txq.head(%d) != head(%d)\n", val, head);
-
-		/* Write head value again */
-		iowrite16((u16)head, cmc_ipc_map.dev[dev_id].txq.head);
-	} while (cnt--);
-}
-
-static void cmc_idpram_set_tx_tail(int dev_id, u32 tail)
-{
-	int cnt = 100;
-	u32 val = 0;
-
-	iowrite16((u16)tail, cmc_ipc_map.dev[dev_id].txq.tail);
-
-	do {
-		/* Check tail value written */
-		val = ioread16(cmc_ipc_map.dev[dev_id].txq.tail);
-		if (val == tail)
-			break;
-
-		mif_err("ERR: txq.tail(%d) != tail(%d)\n", val, tail);
-
-		/* Write tail value again */
-		iowrite16((u16)tail, cmc_ipc_map.dev[dev_id].txq.tail);
-	} while (cnt--);
-}
-
-static u8 __iomem *cmc_idpram_get_tx_buff(int dev_id)
-{
-	return cmc_ipc_map.dev[dev_id].txq.buff;
-}
-
-static u32 cmc_idpram_get_tx_buff_size(int dev_id)
-{
-	return cmc_ipc_map.dev[dev_id].txq.size;
-}
-
-static u32 cmc_idpram_get_rx_head(int dev_id)
-{
-	return ioread16(cmc_ipc_map.dev[dev_id].rxq.head);
-}
-
-static u32 cmc_idpram_get_rx_tail(int dev_id)
-{
-	return ioread16(cmc_ipc_map.dev[dev_id].rxq.tail);
-}
-
-static void cmc_idpram_set_rx_head(int dev_id, u32 head)
-{
-	int cnt = 100;
-	u32 val = 0;
-
-	iowrite16((u16)head, cmc_ipc_map.dev[dev_id].rxq.head);
-
-	do {
-		/* Check head value written */
-		val = ioread16(cmc_ipc_map.dev[dev_id].rxq.head);
-		if (val == head)
-			break;
-
-		mif_err("ERR: rxq.head(%d) != head(%d)\n", val, head);
-
-		/* Write head value again */
-		iowrite16((u16)head, cmc_ipc_map.dev[dev_id].rxq.head);
-	} while (cnt--);
-}
-
-static void cmc_idpram_set_rx_tail(int dev_id, u32 tail)
-{
-	int cnt = 100;
-	u32 val = 0;
-
-	iowrite16((u16)tail, cmc_ipc_map.dev[dev_id].rxq.tail);
-
-	do {
-		/* Check tail value written */
-		val = ioread16(cmc_ipc_map.dev[dev_id].rxq.tail);
-		if (val == tail)
-			break;
-
-		mif_err("ERR: rxq.tail(%d) != tail(%d)\n", val, tail);
-
-		/* Write tail value again */
-		iowrite16((u16)tail, cmc_ipc_map.dev[dev_id].rxq.tail);
-	} while (cnt--);
-}
-
-static u8 __iomem *cmc_idpram_get_rx_buff(int dev_id)
-{
-	return cmc_ipc_map.dev[dev_id].rxq.buff;
-}
-
-static u32 cmc_idpram_get_rx_buff_size(int dev_id)
-{
-	return cmc_ipc_map.dev[dev_id].rxq.size;
-}
-
-static u16 cmc_idpram_get_mask_req_ack(int dev_id)
-{
-	return cmc_ipc_map.dev[dev_id].mask_req_ack;
-}
-
-static u16 cmc_idpram_get_mask_res_ack(int dev_id)
-{
-	return cmc_ipc_map.dev[dev_id].mask_res_ack;
-}
-
-static u16 cmc_idpram_get_mask_send(int dev_id)
-{
-	return cmc_ipc_map.dev[dev_id].mask_send;
-}
-
 /* Set dynamic environment for a modem */
 static void setup_umts_modem_env(void)
 {
-	/*
-	** Config DPRAM control structure
-	*/
+	/* Config DPRAM control structure */
 	if (system_rev == 1 || system_rev >= 4)
 		cmc_idpram_cfg.csn = 0;
 	else
 		cmc_idpram_cfg.csn = 1;
-
 	cmc_idpram_cfg.addr = SROM_CS0_BASE + (SROM_WIDTH * cmc_idpram_cfg.csn);
 	cmc_idpram_cfg.end  = cmc_idpram_cfg.addr + cmc_idpram_cfg.size - 1;
 
+	umts_modem_res[RES_DPRAM_MEM_ID].start = cmc_idpram_cfg.addr;
+	umts_modem_res[RES_DPRAM_MEM_ID].end = cmc_idpram_cfg.end;
+
 	if (system_rev == 1 || system_rev >= 4) {
 		umts_modem_data.gpio_dpram_int = GPIO_CMC_IDPRAM_INT_01;
-		cmc_idpram_ctrl.dpram_irq = CMC_IDPRAM_INT_IRQ_01;
+		umts_modem_res[RES_DPRAM_IRQ_ID].start = CMC_IDPRAM_INT_IRQ_01;
+		umts_modem_res[RES_DPRAM_IRQ_ID].end = CMC_IDPRAM_INT_IRQ_01;
 	}
 }
 
@@ -780,6 +542,8 @@ static void config_umts_modem_gpio(void)
 	unsigned gpio_dpram_int = umts_modem_data.gpio_dpram_int;
 	unsigned gpio_dpram_status = umts_modem_data.gpio_dpram_status;
 	unsigned gpio_dpram_wakeup = umts_modem_data.gpio_dpram_wakeup;
+	unsigned gpio_dynamic_switching =
+			umts_modem_data.gpio_dynamic_switching;
 
 	if (gpio_cp_on) {
 		err = gpio_request(gpio_cp_on, "CMC_ON");
@@ -892,93 +656,51 @@ static void config_umts_modem_gpio(void)
 			s3c_gpio_setpull(gpio_dpram_wakeup, S3C_GPIO_PULL_NONE);
 		}
 	}
+
+	if (gpio_dynamic_switching) {
+		err = gpio_request(gpio_dynamic_switching, "DYNAMIC_SWITCHING");
+		if (err) {
+			mif_err("ERR: fail to request gpio %s\n",
+					"DYNAMIC_SWITCHING\n");
+		} else {
+			gpio_direction_input(gpio_dynamic_switching);
+			s3c_gpio_setpull(gpio_dynamic_switching,
+					S3C_GPIO_PULL_DOWN);
+		}
+	}
+
+	active_ctl.gpio_initialized = 1;
+	mif_info("done\n");
 }
 
-static u8 *cmc_idpram_remap_mem_region(struct sromc_cfg *cfg)
+static u8 *cmc_idpram_remap_sfr_region(struct sromc_cfg *cfg)
 {
 	int dp_addr = cfg->addr;
 	int dp_size = cfg->size;
-	u8 __iomem *dp_base;
-	struct dpram_ipc_cfg *ipc_map;
-	struct dpram_ipc_device *dev;
-
-	/* Remap DPRAM memory region */
-	dp_base = (u8 __iomem *)ioremap_nocache(dp_addr, dp_size);
-	if (!dp_base) {
-		mif_err("ERR: ioremap_nocache for dp_base fail\n");
-		return NULL;
-	}
-	mif_err("DPRAM VA=0x%08X\n", (int)dp_base);
+	u8 __iomem *sfr_base;
 
 	/* Remap DPRAM SFR region */
-	dp_addr += dp_size;
-	cmc_sfr_base = (u8 __iomem *)ioremap_nocache(dp_addr, dp_size);
-	if (cmc_sfr_base == NULL) {
-		iounmap(dp_base);
-		mif_err("ERR: ioremap_nocache for cmc_sfr_base fail\n");
+	dp_addr = cfg->addr + cfg->size;
+	dp_size = cfg->size;
+
+	sfr_base = (u8 __iomem *)ioremap_nocache(dp_addr, dp_size);
+	if (!sfr_base) {
+		mif_err("ERR: ioremap_nocache fail\n");
 		return NULL;
 	}
 
-	cmc_sfr.int2cp = (u16 __iomem *)(cmc_sfr_base + CMC_INT2CP_REG);
-	cmc_sfr.int2ap = (u16 __iomem *)(cmc_sfr_base + CMC_INT2AP_REG);
-	cmc_sfr.clr_int2ap = (u16 __iomem *)(cmc_sfr_base + CMC_CLR_INT_REG);
-	cmc_sfr.reset = (u16 __iomem *)(cmc_sfr_base + CMC_RESET_REG);
-	cmc_sfr.msg2cp = (u16 __iomem *)(cmc_sfr_base + CMC_PUT_REG);
-	cmc_sfr.msg2ap = (u16 __iomem *)(cmc_sfr_base + CMC_GET_REG);
+	cmc_sfr_base = sfr_base;
 
-	cmc_idpram_ctrl.dp_base = (u8 __iomem *)dp_base;
-	cmc_idpram_ctrl.dp_size = dp_size;
+	cmc_sfr.int2cp = (u16 __iomem *)(sfr_base + CMC_INT2CP_REG);
+	cmc_sfr.int2ap = (u16 __iomem *)(sfr_base + CMC_INT2AP_REG);
+	cmc_sfr.clr_int2ap = (u16 __iomem *)(sfr_base + CMC_CLR_INT_REG);
+	cmc_sfr.reset = (u16 __iomem *)(sfr_base + CMC_RESET_REG);
+	cmc_sfr.msg2cp = (u16 __iomem *)(sfr_base + CMC_PUT_REG);
+	cmc_sfr.msg2ap = (u16 __iomem *)(sfr_base + CMC_GET_REG);
 
-	/* Map for IPC */
-	ipc_map = (struct dpram_ipc_cfg *)dp_base;
-
-	/* Magic code and access enable fields */
-	cmc_ipc_map.magic  = (u16 __iomem *)&ipc_map->magic;
-	cmc_ipc_map.access = (u16 __iomem *)&ipc_map->access;
-
-	/* FMT */
-	dev = &cmc_ipc_map.dev[IPC_FMT];
-
-	strcpy(dev->name, "FMT");
-	dev->id = IPC_FMT;
-
-	dev->txq.head = (u16 __iomem *)&ipc_map->fmt_tx_head;
-	dev->txq.tail = (u16 __iomem *)&ipc_map->fmt_tx_tail;
-	dev->txq.buff = (u8 __iomem *)&ipc_map->fmt_tx_buff[0];
-	dev->txq.size = DP_FMT_TX_BUFF_SZ;
-
-	dev->rxq.head = (u16 __iomem *)&ipc_map->fmt_rx_head;
-	dev->rxq.tail = (u16 __iomem *)&ipc_map->fmt_rx_tail;
-	dev->rxq.buff = (u8 __iomem *)&ipc_map->fmt_rx_buff[0];
-	dev->rxq.size = DP_FMT_RX_BUFF_SZ;
-
-	dev->mask_req_ack = INT_MASK_REQ_ACK_F;
-	dev->mask_res_ack = INT_MASK_RES_ACK_F;
-	dev->mask_send    = INT_MASK_SEND_F;
-
-	/* RAW */
-	dev = &cmc_ipc_map.dev[IPC_RAW];
-
-	strcpy(dev->name, "RAW");
-	dev->id = IPC_RAW;
-
-	dev->txq.head = (u16 __iomem *)&ipc_map->raw_tx_head;
-	dev->txq.tail = (u16 __iomem *)&ipc_map->raw_tx_tail;
-	dev->txq.buff = (u8 __iomem *)&ipc_map->raw_tx_buff[0];
-	dev->txq.size = DP_RAW_TX_BUFF_SZ;
-
-	dev->rxq.head = (u16 __iomem *)&ipc_map->raw_rx_head;
-	dev->rxq.tail = (u16 __iomem *)&ipc_map->raw_rx_tail;
-	dev->rxq.buff = (u8 __iomem *)&ipc_map->raw_rx_buff[0];
-	dev->rxq.size = DP_RAW_RX_BUFF_SZ;
-
-	dev->mask_req_ack = INT_MASK_REQ_ACK_R;
-	dev->mask_res_ack = INT_MASK_RES_ACK_R;
-	dev->mask_send    = INT_MASK_SEND_R;
-
-	return dp_base;
+	return sfr_base;
 }
-#endif
+#endif /*CONFIG_LTE_MODEM_CMC221*/
 
 #ifdef CONFIG_CDMA_MODEM_CBP72
 static struct sromc_cfg cbp_edpram_cfg = {
@@ -998,132 +720,9 @@ static struct sromc_access_cfg cbp_edpram_access_cfg[] = {
 	},
 };
 
-/*
-	magic_code +
-	access_enable +
-	fmt_tx_head + fmt_tx_tail + fmt_tx_buff +
-	raw_tx_head + raw_tx_tail + raw_tx_buff +
-	fmt_rx_head + fmt_rx_tail + fmt_rx_buff +
-	raw_rx_head + raw_rx_tail + raw_rx_buff +
-	mbx_cp2ap +
-	mbx_ap2cp
- =	2 +
-	2 +
-	2 + 2 + 1336 +
-	2 + 2 + 4564 +
-	2 + 2 + 1336 +
-	2 + 2 + 9124 +
-	2 +
-	2
- =	16384
-*/
-
-#define CBP_DP_FMT_TX_BUFF_SZ	1336
-#define CBP_DP_RAW_TX_BUFF_SZ	4564
-#define CBP_DP_FMT_RX_BUFF_SZ	1336
-#define CBP_DP_RAW_RX_BUFF_SZ	9124
-
-#define MAX_CBP_EDPRAM_IPC_DEV	(IPC_RAW + 1)	/* FMT, RAW */
-
-struct cbp_edpram_ipc_cfg {
-	u16 magic;
-	u16 access;
-
-	u16 fmt_tx_head;
-	u16 fmt_tx_tail;
-	u8  fmt_tx_buff[CBP_DP_FMT_TX_BUFF_SZ];
-
-	u16 raw_tx_head;
-	u16 raw_tx_tail;
-	u8  raw_tx_buff[CBP_DP_RAW_TX_BUFF_SZ];
-
-	u16 fmt_rx_head;
-	u16 fmt_rx_tail;
-	u8  fmt_rx_buff[CBP_DP_FMT_RX_BUFF_SZ];
-
-	u16 raw_rx_head;
-	u16 raw_rx_tail;
-	u8  raw_rx_buff[CBP_DP_RAW_RX_BUFF_SZ];
-
-	u16 mbx_cp2ap;
-	u16 mbx_ap2cp;
-};
-
-static struct dpram_ipc_map cbp_ipc_map;
-
-static void cbp_edpram_reset(void);
-static void cbp_edpram_clr_intr(void);
-static u16  cbp_edpram_recv_intr(void);
-static void cbp_edpram_send_intr(u16 irq_mask);
-static u16  cbp_edpram_recv_msg(void);
-static void cbp_edpram_send_msg(u16 msg);
-
-static u16  cbp_edpram_get_magic(void);
-static void cbp_edpram_set_magic(u16 value);
-static u16  cbp_edpram_get_access(void);
-static void cbp_edpram_set_access(u16 value);
-
-static u32  cbp_edpram_get_tx_head(int dev_id);
-static u32  cbp_edpram_get_tx_tail(int dev_id);
-static void cbp_edpram_set_tx_head(int dev_id, u32 head);
-static void cbp_edpram_set_tx_tail(int dev_id, u32 tail);
-static u8 __iomem *cbp_edpram_get_tx_buff(int dev_id);
-static u32  cbp_edpram_get_tx_buff_size(int dev_id);
-
-static u32  cbp_edpram_get_rx_head(int dev_id);
-static u32  cbp_edpram_get_rx_tail(int dev_id);
-static void cbp_edpram_set_rx_head(int dev_id, u32 head);
-static void cbp_edpram_set_rx_tail(int dev_id, u32 tail);
-static u8 __iomem *cbp_edpram_get_rx_buff(int dev_id);
-static u32  cbp_edpram_get_rx_buff_size(int dev_id);
-
-static u16  cbp_edpram_get_mask_req_ack(int dev_id);
-static u16  cbp_edpram_get_mask_res_ack(int dev_id);
-static u16  cbp_edpram_get_mask_send(int dev_id);
-
 static struct modemlink_dpram_control cbp_edpram_ctrl = {
-	.reset      = cbp_edpram_reset,
-
-	.clear_intr = cbp_edpram_clr_intr,
-	.recv_intr  = cbp_edpram_recv_intr,
-	.send_intr  = cbp_edpram_send_intr,
-	.recv_msg   = cbp_edpram_recv_msg,
-	.send_msg   = cbp_edpram_send_msg,
-
-	.get_magic  = cbp_edpram_get_magic,
-	.set_magic  = cbp_edpram_set_magic,
-	.get_access = cbp_edpram_get_access,
-	.set_access = cbp_edpram_set_access,
-
-	.get_tx_head = cbp_edpram_get_tx_head,
-	.get_tx_tail = cbp_edpram_get_tx_tail,
-	.set_tx_head = cbp_edpram_set_tx_head,
-	.set_tx_tail = cbp_edpram_set_tx_tail,
-	.get_tx_buff = cbp_edpram_get_tx_buff,
-	.get_tx_buff_size = cbp_edpram_get_tx_buff_size,
-
-	.get_rx_head = cbp_edpram_get_rx_head,
-	.get_rx_tail = cbp_edpram_get_rx_tail,
-	.set_rx_head = cbp_edpram_set_rx_head,
-	.set_rx_tail = cbp_edpram_set_rx_tail,
-	.get_rx_buff = cbp_edpram_get_rx_buff,
-	.get_rx_buff_size = cbp_edpram_get_rx_buff_size,
-
-	.get_mask_req_ack = cbp_edpram_get_mask_req_ack,
-	.get_mask_res_ack = cbp_edpram_get_mask_res_ack,
-	.get_mask_send    = cbp_edpram_get_mask_send,
-
-	.dp_base = NULL,
-	.dp_size = 0,
 	.dp_type = EXT_DPRAM,
-	.aligned = 1,
-
-	.dpram_irq        = CBP_DPRAM_INT_IRQ_00,
-	.dpram_irq_flags  = (IRQF_NO_SUSPEND | IRQF_TRIGGER_FALLING),
-	.dpram_irq_name   = "CBP72_EDPRAM_IRQ",
-	.dpram_wlock_name = "CBP72_EDPRAM_WLOCK",
-
-	.max_ipc_dev = MAX_CBP_EDPRAM_IPC_DEV,
+	.dpram_irq_flags = (IRQF_NO_SUSPEND | IRQF_TRIGGER_FALLING),
 };
 
 /*
@@ -1214,6 +813,13 @@ static struct modem_io_t cdma_io_devices[] = {
 		.io_type = IODEV_MISC,
 		.links = LINKTYPE(LINKDEV_DPRAM),
 	},
+	[12] = {
+		.name = "cdma_cplog",
+		.id = 29,
+		.format = IPC_RAW,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_DPRAM),
+	},
 };
 
 static struct modem_data cdma_modem_data = {
@@ -1242,10 +848,22 @@ static struct modem_data cdma_modem_data = {
 };
 
 static struct resource cdma_modem_res[] = {
-	[0] = {
-		.name  = "cp_active_irq",
+	[RES_CP_ACTIVE_IRQ_ID] = {
+		.name = "cp_active_irq",
 		.start = CBP_PHONE_ACTIVE_IRQ,
-		.end   = CBP_PHONE_ACTIVE_IRQ,
+		.end = CBP_PHONE_ACTIVE_IRQ,
+		.flags = IORESOURCE_IRQ,
+	},
+	[RES_DPRAM_MEM_ID] = {
+		.name = "dpram_base",
+		.start = SROM_CS0_BASE,
+		.end = SROM_CS0_BASE + (CBP_EDPRAM_SIZE - 1),
+		.flags = IORESOURCE_MEM,
+	},
+	[RES_DPRAM_IRQ_ID] = {
+		.name = "dpram_irq",
+		.start = CBP_DPRAM_INT_IRQ_00,
+		.end = CBP_DPRAM_INT_IRQ_00,
 		.flags = IORESOURCE_IRQ,
 	},
 };
@@ -1260,148 +878,24 @@ static struct platform_device cdma_modem = {
 	},
 };
 
-static void cbp_edpram_reset(void)
-{
-	return;
-}
-
-static void cbp_edpram_clr_intr(void)
-{
-	ioread16(cbp_ipc_map.mbx_cp2ap);
-}
-
-static u16 cbp_edpram_recv_intr(void)
-{
-	return ioread16(cbp_ipc_map.mbx_cp2ap);
-}
-
-static void cbp_edpram_send_intr(u16 irq_mask)
-{
-	iowrite16(irq_mask, cbp_ipc_map.mbx_ap2cp);
-}
-
-static u16 cbp_edpram_recv_msg(void)
-{
-	return ioread16(cbp_ipc_map.mbx_cp2ap);
-}
-
-static void cbp_edpram_send_msg(u16 msg)
-{
-	iowrite16(msg, cbp_ipc_map.mbx_ap2cp);
-}
-
-static u16 cbp_edpram_get_magic(void)
-{
-	return ioread16(cbp_ipc_map.magic);
-}
-
-static void cbp_edpram_set_magic(u16 value)
-{
-	iowrite16(value, cbp_ipc_map.magic);
-}
-
-static u16 cbp_edpram_get_access(void)
-{
-	return ioread16(cbp_ipc_map.access);
-}
-
-static void cbp_edpram_set_access(u16 value)
-{
-	iowrite16(value, cbp_ipc_map.access);
-}
-
-static u32 cbp_edpram_get_tx_head(int dev_id)
-{
-	return ioread16(cbp_ipc_map.dev[dev_id].txq.head);
-}
-
-static u32 cbp_edpram_get_tx_tail(int dev_id)
-{
-	return ioread16(cbp_ipc_map.dev[dev_id].txq.tail);
-}
-
-static void cbp_edpram_set_tx_head(int dev_id, u32 head)
-{
-	iowrite16((u16)head, cbp_ipc_map.dev[dev_id].txq.head);
-}
-
-static void cbp_edpram_set_tx_tail(int dev_id, u32 tail)
-{
-	iowrite16((u16)tail, cbp_ipc_map.dev[dev_id].txq.tail);
-}
-
-static u8 __iomem *cbp_edpram_get_tx_buff(int dev_id)
-{
-	return cbp_ipc_map.dev[dev_id].txq.buff;
-}
-
-static u32 cbp_edpram_get_tx_buff_size(int dev_id)
-{
-	return cbp_ipc_map.dev[dev_id].txq.size;
-}
-
-static u32 cbp_edpram_get_rx_head(int dev_id)
-{
-	return ioread16(cbp_ipc_map.dev[dev_id].rxq.head);
-}
-
-static u32 cbp_edpram_get_rx_tail(int dev_id)
-{
-	return ioread16(cbp_ipc_map.dev[dev_id].rxq.tail);
-}
-
-static void cbp_edpram_set_rx_head(int dev_id, u32 head)
-{
-	return iowrite16((u16)head, cbp_ipc_map.dev[dev_id].rxq.head);
-}
-
-static void cbp_edpram_set_rx_tail(int dev_id, u32 tail)
-{
-	return iowrite16((u16)tail, cbp_ipc_map.dev[dev_id].rxq.tail);
-}
-
-static u8 __iomem *cbp_edpram_get_rx_buff(int dev_id)
-{
-	return cbp_ipc_map.dev[dev_id].rxq.buff;
-}
-
-static u32 cbp_edpram_get_rx_buff_size(int dev_id)
-{
-	return cbp_ipc_map.dev[dev_id].rxq.size;
-}
-
-static u16 cbp_edpram_get_mask_req_ack(int dev_id)
-{
-	return cbp_ipc_map.dev[dev_id].mask_req_ack;
-}
-
-static u16 cbp_edpram_get_mask_res_ack(int dev_id)
-{
-	return cbp_ipc_map.dev[dev_id].mask_res_ack;
-}
-
-static u16 cbp_edpram_get_mask_send(int dev_id)
-{
-	return cbp_ipc_map.dev[dev_id].mask_send;
-}
-
 /* Set dynamic environment for a modem */
 static void setup_cdma_modem_env(void)
 {
-	/*
-	** Config DPRAM control structure
-	*/
+	/* Config DPRAM control structure */
 	if (system_rev == 1 || system_rev >= 4)
 		cbp_edpram_cfg.csn = 1;
 	else
 		cbp_edpram_cfg.csn = 0;
-
 	cbp_edpram_cfg.addr = SROM_CS0_BASE + (SROM_WIDTH * cbp_edpram_cfg.csn);
-	cbp_edpram_cfg.end  = cbp_edpram_cfg.addr + cbp_edpram_cfg.size - 1;
+	cbp_edpram_cfg.end = cbp_edpram_cfg.addr + (cbp_edpram_cfg.size - 1);
+
+	cdma_modem_res[RES_DPRAM_MEM_ID].start = cbp_edpram_cfg.addr;
+	cdma_modem_res[RES_DPRAM_MEM_ID].end = cbp_edpram_cfg.end;
 
 	if (system_rev == 1 || system_rev >= 4) {
 		cdma_modem_data.gpio_dpram_int = GPIO_CBP_DPRAM_INT_01;
-		cbp_edpram_ctrl.dpram_irq = CBP_DPRAM_INT_IRQ_01;
+		cdma_modem_res[RES_DPRAM_IRQ_ID].start = CBP_DPRAM_INT_IRQ_01;
+		cdma_modem_res[RES_DPRAM_IRQ_ID].end = CBP_DPRAM_INT_IRQ_01;
 	}
 }
 
@@ -1494,98 +988,24 @@ static void config_cdma_modem_gpio(void)
 
 	/* set low unused gpios between AP and CP */
 	err = gpio_request(GPIO_FLM_RXD, "FLM_RXD");
-	if (err)
+	if (err) {
 		pr_err(LOG_TAG "fail to request gpio %s : %d\n", "FLM_RXD",
 		err);
-	else {
+	} else {
 		gpio_direction_input(GPIO_FLM_RXD);
 		s3c_gpio_setpull(GPIO_FLM_RXD, S3C_GPIO_PULL_UP);
 		s3c_gpio_cfgpin(GPIO_FLM_RXD, S3C_GPIO_SFN(2));
 	}
 
 	err = gpio_request(GPIO_FLM_TXD, "FLM_TXD");
-	if (err)
+	if (err) {
 		pr_err(LOG_TAG "fail to request gpio %s : %d\n", "FLM_TXD",
 		err);
-	else {
+	} else {
 		gpio_direction_input(GPIO_FLM_TXD);
 		s3c_gpio_setpull(GPIO_FLM_TXD, S3C_GPIO_PULL_NONE);
 		s3c_gpio_cfgpin(GPIO_FLM_TXD, S3C_GPIO_SFN(2));
 	}
-}
-
-static u8 *cbp_edpram_remap_mem_region(struct sromc_cfg *cfg)
-{
-	int			      dp_addr = 0;
-	int			      dp_size = 0;
-	u8 __iomem                   *dp_base = NULL;
-	struct cbp_edpram_ipc_cfg    *ipc_map = NULL;
-	struct dpram_ipc_device *dev = NULL;
-
-	dp_addr = cfg->addr;
-	dp_size = cfg->size;
-	dp_base = (u8 *)ioremap_nocache(dp_addr, dp_size);
-	if (!dp_base) {
-		pr_err("[MDM] <%s> dpram base ioremap fail\n", __func__);
-		return NULL;
-	}
-	pr_info("[MDM] <%s> DPRAM VA=0x%08X\n", __func__, (int)dp_base);
-
-	cbp_edpram_ctrl.dp_base = (u8 __iomem *)dp_base;
-	cbp_edpram_ctrl.dp_size = dp_size;
-
-	/* Map for IPC */
-	ipc_map = (struct cbp_edpram_ipc_cfg *)dp_base;
-
-	/* Magic code and access enable fields */
-	cbp_ipc_map.magic  = (u16 __iomem *)&ipc_map->magic;
-	cbp_ipc_map.access = (u16 __iomem *)&ipc_map->access;
-
-	/* FMT */
-	dev = &cbp_ipc_map.dev[IPC_FMT];
-
-	strcpy(dev->name, "FMT");
-	dev->id = IPC_FMT;
-
-	dev->txq.head = (u16 __iomem *)&ipc_map->fmt_tx_head;
-	dev->txq.tail = (u16 __iomem *)&ipc_map->fmt_tx_tail;
-	dev->txq.buff = (u8 __iomem *)&ipc_map->fmt_tx_buff[0];
-	dev->txq.size = CBP_DP_FMT_TX_BUFF_SZ;
-
-	dev->rxq.head = (u16 __iomem *)&ipc_map->fmt_rx_head;
-	dev->rxq.tail = (u16 __iomem *)&ipc_map->fmt_rx_tail;
-	dev->rxq.buff = (u8 __iomem *)&ipc_map->fmt_rx_buff[0];
-	dev->rxq.size = CBP_DP_FMT_RX_BUFF_SZ;
-
-	dev->mask_req_ack = INT_MASK_REQ_ACK_F;
-	dev->mask_res_ack = INT_MASK_RES_ACK_F;
-	dev->mask_send    = INT_MASK_SEND_F;
-
-	/* RAW */
-	dev = &cbp_ipc_map.dev[IPC_RAW];
-
-	strcpy(dev->name, "RAW");
-	dev->id = IPC_RAW;
-
-	dev->txq.head = (u16 __iomem *)&ipc_map->raw_tx_head;
-	dev->txq.tail = (u16 __iomem *)&ipc_map->raw_tx_tail;
-	dev->txq.buff = (u8 __iomem *)&ipc_map->raw_tx_buff[0];
-	dev->txq.size = CBP_DP_RAW_TX_BUFF_SZ;
-
-	dev->rxq.head = (u16 __iomem *)&ipc_map->raw_rx_head;
-	dev->rxq.tail = (u16 __iomem *)&ipc_map->raw_rx_tail;
-	dev->rxq.buff = (u8 __iomem *)&ipc_map->raw_rx_buff[0];
-	dev->rxq.size = CBP_DP_RAW_RX_BUFF_SZ;
-
-	dev->mask_req_ack = INT_MASK_REQ_ACK_R;
-	dev->mask_res_ack = INT_MASK_RES_ACK_R;
-	dev->mask_send    = INT_MASK_SEND_R;
-
-	/* Mailboxes */
-	cbp_ipc_map.mbx_ap2cp = (u16 __iomem *)&ipc_map->mbx_ap2cp;
-	cbp_ipc_map.mbx_cp2ap = (u16 __iomem *)&ipc_map->mbx_cp2ap;
-
-	return dp_base;
 }
 #endif
 
@@ -1601,10 +1021,8 @@ static u8 *cbp_edpram_remap_mem_region(struct sromc_cfg *cfg)
  *	It used 14 bits (13bits for 16KB word address and 1 bit for SFR
  *	register)
  */
-static void config_dpram_port_gpio(void)
+static void config_dpram_port_gpio(int addr_bits)
 {
-	int addr_bits = SROM_NUM_ADDR_BITS;
-
 	mif_info("address line = %d bits\n", addr_bits);
 
 	/*
@@ -1719,7 +1137,7 @@ static int __init init_modem(void)
 	setup_umts_modem_env();
 	setup_cdma_modem_env();
 
-	config_dpram_port_gpio();
+	config_dpram_port_gpio(SROM_NUM_ADDR_BITS);
 
 	config_umts_modem_gpio();
 	config_cdma_modem_gpio();
@@ -1734,12 +1152,11 @@ static int __init init_modem(void)
 	acc_cfg = &cbp_edpram_access_cfg[DPRAM_SPEED_LOW];
 	setup_sromc(cfg->csn, cfg, acc_cfg);
 
-	if (!cmc_idpram_remap_mem_region(&cmc_idpram_cfg))
+	if (!cmc_idpram_remap_sfr_region(&cmc_idpram_cfg))
 		return -1;
+
 	platform_device_register(&umts_modem);
 
-	if (!cbp_edpram_remap_mem_region(&cbp_edpram_cfg))
-		return -1;
 	platform_device_register(&cdma_modem);
 
 	return 0;
@@ -1747,55 +1164,104 @@ static int __init init_modem(void)
 late_initcall(init_modem);
 /*device_initcall(init_modem);*/
 
-#ifdef CONFIG_USBHUB_USB3503
-static int (*usbhub_set_mode)(struct usb3503_hubctl *, int);
-static struct usb3503_hubctl *usbhub_ctl;
-
 #ifdef CONFIG_EXYNOS4_CPUFREQ
-static int exynos_cpu_frequency_lock(void)
+static int exynos_frequency_lock(struct device *dev)
 {
-	unsigned int level, freq = 700;
+	unsigned int level, cpufreq = 600; /* 200 ~ 1400 */
+	unsigned int busfreq = 400200; /* 100100 ~ 400200 */
+	int ret = 0;
+	struct device *busdev = dev_get("exynos-busfreq");
 
 	if (atomic_read(&umts_link_pm_data.freqlock) == 0) {
-		if (exynos_cpufreq_get_level(freq * 1000, &level)) {
-			mif_err("ERR: exynos_cpufreq_get_level fail\n");
-			return -EINVAL;
+		/* cpu frequency lock */
+		ret = exynos_cpufreq_get_level(cpufreq * 1000, &level);
+		if (ret < 0) {
+			mif_err("ERR: exynos_cpufreq_get_level fail: %d\n",
+					ret);
+			goto exit;
 		}
 
-		if (exynos_cpufreq_lock(DVFS_LOCK_ID_USB_IF, level)) {
-			mif_err("ERR: exynos_cpufreq_lock fail\n");
-			return -EINVAL;
+		ret = exynos_cpufreq_lock(DVFS_LOCK_ID_USB_IF, level);
+		if (ret < 0) {
+			mif_err("ERR: exynos_cpufreq_lock fail: %d\n", ret);
+			goto exit;
 		}
+
+		/* bus frequncy lock */
+		if (!busdev) {
+			mif_err("ERR: busdev is not exist\n");
+			ret = -ENODEV;
+			goto exit;
+		}
+
+		ret = dev_lock(busdev, dev, busfreq);
+		if (ret < 0) {
+			mif_err("ERR: dev_lock error: %d\n", ret);
+			goto exit;
+		}
+
+		/* lock minimum number of cpu cores */
+		cpufreq_pegasusq_min_cpu_lock(2);
 
 		atomic_set(&umts_link_pm_data.freqlock, 1);
-		mif_debug("<%d> %d MHz\n", level, freq);
+		mif_debug("level=%d, cpufreq=%d MHz, busfreq=%06d\n",
+				level, cpufreq, busfreq);
 	}
-	return 0;
+exit:
+	return ret;
 }
 
-static int exynos_cpu_frequency_unlock(void)
+static int exynos_frequency_unlock(struct device *dev)
 {
+	int ret = 0;
+	struct device *busdev = dev_get("exynos-busfreq");
+
 	if (atomic_read(&umts_link_pm_data.freqlock) == 1) {
+		/* cpu frequency unlock */
 		exynos_cpufreq_lock_free(DVFS_LOCK_ID_USB_IF);
+
+		/* bus frequency unlock */
+		ret = dev_unlock(busdev, dev);
+		if (ret < 0) {
+			mif_err("ERR: dev_unlock error: %d\n", ret);
+			goto exit;
+		}
+
+		/* unlock minimum number of cpu cores */
+		cpufreq_pegasusq_min_cpu_unlock();
+
 		atomic_set(&umts_link_pm_data.freqlock, 0);
-		mif_debug("\n");
+		mif_debug("success\n");
 	}
-	return 0;
+exit:
+	return ret;
 }
 #else
-static int exynos_cpu_frequency_lock(void)
+static int exynos_frequency_lock(void)
 {
 	return 0;
 }
 
-static int exynos_cpu_frequency_unlock(void)
+static int exynos_frequency_unlock(void)
 {
 	return 0;
 }
 #endif
 
+static int (*usbhub_set_mode)(struct usb3503_hubctl *, int);
+static struct usb3503_hubctl *usbhub_ctl;
+
 void set_host_states(struct platform_device *pdev, int type)
 {
+	if (modem_using_hub())
+		return;
+
+	if (active_ctl.gpio_initialized) {
+		mif_err("%s: > H-ACT %d\n", pdev->name, type);
+		gpio_direction_output(umts_link_pm_data.gpio_link_active, type);
+	} else {
+		active_ctl.gpio_request_host_active = 1;
+	}
 }
 
 static int usb3503_hub_handler(void (*set_mode)(void), void *ctl)
@@ -1900,6 +1366,9 @@ static int host_port_enable(int port, int enable)
 
 	mif_info("port(%d) control(%d)\n", port, enable);
 
+	if (!modem_using_hub())
+		return 0;
+
 	if (enable) {
 		err = usbhub_set_mode(usbhub_ctl, USB3503_MODE_HUB);
 		if (err < 0) {
@@ -1931,15 +1400,3 @@ static int host_port_enable(int port, int enable)
 exit:
 	return err;
 }
-#else
-void set_host_states(struct platform_device *pdev, int type)
-{
-	if (active_ctl.gpio_initialized) {
-		mif_err("<%s> Active States =%d, %s\n", pdev->name, type);
-		gpio_direction_output(umts_link_pm_data.gpio_link_active, type);
-	} else {
-		active_ctl.gpio_request_host_active = 1;
-	}
-}
-#endif
-

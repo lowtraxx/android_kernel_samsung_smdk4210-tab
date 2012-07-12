@@ -36,9 +36,11 @@
 #define DBG(f, x...) \
 	pr_debug(DRIVER_NAME " [%s()]: " f,  __func__, ## x)
 
+#ifndef CONFIG_FAST_RESUME
 #if defined(CONFIG_LEDS_CLASS) || (defined(CONFIG_LEDS_CLASS_MODULE) && \
 	defined(CONFIG_MMC_SDHCI_MODULE))
 #define SDHCI_USE_LEDS_CLASS
+#endif
 #endif
 
 #define MAX_TUNING_LOOP 40
@@ -643,9 +645,14 @@ static u8 sdhci_calc_timeout(struct sdhci_host *host, struct mmc_command *cmd)
 	/* timeout in us */
 	if (!data)
 		target_timeout = cmd->cmd_timeout_ms * 1000;
-	else
-		target_timeout = data->timeout_ns / 1000 +
-			data->timeout_clks / host->clock;
+	else {
+		/* patch added for divide by zero once issue. */
+		if (host && host->clock)
+			target_timeout = data->timeout_ns / 1000 +
+				data->timeout_clks / host->clock;
+		else
+			return 0;
+	}
 
 	if (host->quirks & SDHCI_QUIRK_DATA_TIMEOUT_USES_SDCLK)
 		host->timeout_clk = host->clock / 1000;
@@ -1961,6 +1968,10 @@ static void sdhci_tasklet_finish(unsigned long param)
 		   controllers do not like that. */
 		sdhci_reset(host, SDHCI_RESET_CMD);
 		sdhci_reset(host, SDHCI_RESET_DATA);
+#ifdef CONFIG_MACH_PX
+		printk(KERN_DEBUG "%s: Controller is resetted!\n",
+			mmc_hostname(host->mmc));
+#endif
 	}
 
 	host->mrq = NULL;
@@ -2057,6 +2068,10 @@ static void sdhci_cmd_irq(struct sdhci_host *host, u32 intmask)
 
 	if (host->cmd->error) {
 		tasklet_schedule(&host->finish_tasklet);
+#ifdef CONFIG_MACH_PX
+		printk(KERN_DEBUG "%s: finish tasklet schedule\n",
+			mmc_hostname(host->mmc));
+#endif
 		return;
 	}
 

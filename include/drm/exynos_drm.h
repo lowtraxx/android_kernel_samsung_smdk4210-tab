@@ -224,11 +224,14 @@ enum e_drm_exynos_gem_mem_type {
  *	P.S. it SHOULD BE user space.
  * @size: buffer size for cache operation.
  * @flags: select cache unit and cache operation.
+ * @gem_handle: a handle to a gem object.
+ *	this gem handle is needed for cache range operation to L2 cache.
  */
 struct drm_exynos_gem_cache_op {
 	uint64_t usr_addr;
 	unsigned int size;
 	unsigned int flags;
+	unsigned int gem_handle;
 };
 
 struct drm_exynos_plane_set_zpos {
@@ -305,12 +308,12 @@ enum drm_exynos_degree {
 	EXYNOS_DRM_DEGREE_270,
 };
 
-/* definition of planer */
+/* definition of planar */
 enum drm_exynos_planer {
-	EXYNOS_DRM_PLANER_Y,
-	EXYNOS_DRM_PLANER_CB,
-	EXYNOS_DRM_PLANER_CR,
-	EXYNOS_DRM_PLANER_MAX
+	EXYNOS_DRM_PLANAR_Y,
+	EXYNOS_DRM_PLANAR_CB,
+	EXYNOS_DRM_PLANAR_CR,
+	EXYNOS_DRM_PLANAR_MAX
 };
 
 /**
@@ -343,15 +346,11 @@ struct drm_exynos_ipp_property {
 
 /* command of ipp operations */
 enum drm_exynos_ipp_cmd {
-	/* not used status */
-	IPP_CMD_NONE = (0 << 0),
-	/* in used status */
-	IPP_CMD_WB = (1 << 0),
-	IPP_CMD_SCALE = (1 << 1),
-	IPP_CMD_M2M = (1 << 2),
-	IPP_CMD_OUT = (1 << 3),
-	/* error status */
-	IPP_CMD_MAX = 0x7f
+	IPP_CMD_NONE,
+	IPP_CMD_M2M,
+	IPP_CMD_WB,
+	IPP_CMD_OUT,
+	IPP_CMD_MAX
 };
 
 /* definition of buffer control */
@@ -368,14 +367,14 @@ enum drm_exynos_ipp_buf_ctrl {
  * @ops_id: operation directions.
  * @ctrl: buffer control.
  * @id: index of buffer.
- * @handle: Y, Cb, Cr each planer handle.
+ * @handle: Y, Cb, Cr each planar handle.
  * @user_data: user data.
  */
 struct drm_exynos_ipp_buf {
 	enum drm_exynos_ops_id	ops_id;
 	enum drm_exynos_ipp_buf_ctrl	buf_ctrl;
 	__u32	id;
-	__u32	handle[EXYNOS_DRM_PLANER_MAX];
+	__u32	handle[EXYNOS_DRM_PLANAR_MAX];
 	__u64	user_data;
 };
 
@@ -468,6 +467,7 @@ struct drm_exynos_ipp_ctrl {
 
 /* EXYNOS specific events */
 #define DRM_EXYNOS_G2D_EVENT		0x80000000
+#define DRM_EXYNOS_IPP_EVENT		0x80000001
 
 struct drm_exynos_g2d_event {
 	struct drm_event	base;
@@ -477,8 +477,6 @@ struct drm_exynos_g2d_event {
 	__u32			cmdlist_no;
 	__u32			reserved;
 };
-
-#define DRM_EXYNOS_IPP_EVENT		0x80000001
 
 struct drm_exynos_ipp_event {
 	struct drm_event	base;
@@ -566,9 +564,9 @@ struct exynos_drm_fimc_pol {
 
 /* definition of chipset version */
 enum exynos_drm_fimc_ver {
-	FIMC_EYNOS_4210,
-	FIMC_EYNOS_4212,
-	FIMC_EYNOS_4412
+	FIMC_EXYNOS_4210,
+	FIMC_EXYNOS_4212,
+	FIMC_EXYNOS_4412
 };
 
 /**

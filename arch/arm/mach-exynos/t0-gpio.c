@@ -29,7 +29,7 @@ struct gpio_init_data {
 };
 
 /*
- * M0 GPIO Init Table
+ * T0 GPIO Init Table
  */
 static struct gpio_init_data m0_init_gpios[] = {
 	{EXYNOS4_GPA1(4), S3C_GPIO_INPUT, S3C_GPIO_SETPIN_NONE,
@@ -85,13 +85,9 @@ static struct gpio_init_data m0_init_gpios[] = {
 		S3C_GPIO_PULL_NONE, S5P_GPIO_DRVSTR_LV1}, /* BT_WAKE */
 	{EXYNOS4_GPX3(2), S3C_GPIO_INPUT, S3C_GPIO_SETPIN_NONE,
 		S3C_GPIO_PULL_NONE, S5P_GPIO_DRVSTR_LV1}, /* CP_PMU_RST */
-#if defined(CONFIG_SEC_MODEM_M0_TD)
-	{EXYNOS4_GPX3(5), S3C_GPIO_OUTPUT, S3C_GPIO_SETPIN_NONE,
-		S3C_GPIO_PULL_NONE, S5P_GPIO_DRVSTR_LV1},
-#else
 	{EXYNOS4_GPX3(5), S3C_GPIO_INPUT, S3C_GPIO_SETPIN_NONE,
 		S3C_GPIO_PULL_DOWN, S5P_GPIO_DRVSTR_LV1},
-#endif
+
 	{EXYNOS4212_GPJ0(0), S3C_GPIO_INPUT, S3C_GPIO_SETPIN_ZERO,
 		S3C_GPIO_PULL_NONE, S5P_GPIO_DRVSTR_LV4}, /* WLAN_EN */
 	{EXYNOS4_GPK3(1), S3C_GPIO_INPUT, S3C_GPIO_SETPIN_NONE,
@@ -134,7 +130,7 @@ static struct gpio_init_data m0_init_gpios[] = {
 };
 
 /*
- * M0 GPIO Sleep Table
+ * T0 GPIO Sleep Table
  */
 static unsigned int m0_sleep_gpio_table[][3] = {
 	{EXYNOS4_GPA0(0),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_NONE},
@@ -167,11 +163,7 @@ static unsigned int m0_sleep_gpio_table[][3] = {
 	{EXYNOS4_GPC0(2),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* REC_PCM_SYNC(NC) */
 	{EXYNOS4_GPC0(3),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* REC_PCM_IN(NC) */
 	{EXYNOS4_GPC0(4),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* REC_PCM_OUT(NC) */
-#if defined(CONFIG_SEC_MODEM_M0_TD)
-	{EXYNOS4_GPC1(0), S3C_GPIO_SLP_PREV, S3C_GPIO_PULL_NONE},
-#else
 	{EXYNOS4_GPC1(0), S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_NONE},
-#endif
 	{EXYNOS4_GPC1(1),  S3C_GPIO_SLP_PREV, S3C_GPIO_PULL_NONE}, /* FM_RST */
 
 	{EXYNOS4_GPC1(2),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_NONE},
@@ -205,12 +197,21 @@ static unsigned int m0_sleep_gpio_table[][3] = {
 	{EXYNOS4_GPF1(4),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_NONE}, /* NC */
 	{EXYNOS4_GPF1(5),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_NONE}, /* NC */
 	/* GPF1(6) M0, C1 PDA_ACTIVE, let cp know AP sleep status*/
+#ifdef CONFIG_T0_EUR_OPEN
 	{EXYNOS4_GPF1(6),  S3C_GPIO_SLP_OUT0, S3C_GPIO_PULL_NONE},
+#else
+	/* GPF1(6) T0 LTE prev level, if not mdm notice it as crash  */
+	{EXYNOS4_GPF1(6),  S3C_GPIO_SLP_PREV, S3C_GPIO_PULL_NONE},
+#endif
 	{EXYNOS4_GPF1(7),  S3C_GPIO_SLP_PREV, S3C_GPIO_PULL_NONE}, /* NC */
 
 	{EXYNOS4_GPF2(0),  S3C_GPIO_SLP_PREV, S3C_GPIO_PULL_NONE}, /* NC */
 	{EXYNOS4_GPF2(1),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
+#ifdef CONFIG_T0_EUR_OPEN
 	{EXYNOS4_GPF2(2),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
+#else
+	{EXYNOS4_GPF2(2),  S3C_GPIO_SLP_PREV, S3C_GPIO_PULL_NONE}, /* NC */
+#endif
 	{EXYNOS4_GPF2(3),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
 	{EXYNOS4_GPF2(4),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
 	{EXYNOS4_GPF2(5),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
@@ -274,10 +275,19 @@ static unsigned int m0_sleep_gpio_table[][3] = {
 	{EXYNOS4_GPL2(2),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
 	{EXYNOS4_GPL2(3),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN},
 	{EXYNOS4_GPL2(4),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
+#ifdef CONFIG_T0_EUR_OPEN
 	{EXYNOS4_GPL2(5),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN},
+#else
+	{EXYNOS4_GPL2(5),  S3C_GPIO_SLP_PREV, S3C_GPIO_PULL_NONE},
+#endif
 	{EXYNOS4_GPL2(6),  S3C_GPIO_SLP_PREV,  S3C_GPIO_PULL_NONE},
 	{EXYNOS4_GPL2(7),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN},
-
+#ifndef CONFIG_T0_EUR_OPEN
+	/* GPX1(0) VDDMIN (pda active) set to low at Sleep */
+	{EXYNOS4_GPX1(0),  S3C_GPIO_SLP_OUT0,  S3C_GPIO_PULL_DOWN},
+	/* GPX3(2) T0 LTE HOST PORT PWR, hold previous level */
+	{EXYNOS4_GPX3(2),  S3C_GPIO_SLP_PREV,  S3C_GPIO_PULL_NONE},
+#endif
 	{EXYNOS4_GPY0(0),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
 
 	{EXYNOS4_GPY0(1),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
@@ -444,68 +454,10 @@ static unsigned int m0_sleep_gpio_table[][3] = {
 }; /* m0_sleep_gpio_table */
 
 /*
- * M0 Rev0.4 GPIO Sleep Table
+ * T0 Rev0.1 GPIO Sleep Table
  */
-static unsigned int m0_sleep_gpio_table_rev04[][3] = {
-	{EXYNOS4_GPF2(3),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
-	{EXYNOS4212_GPJ0(1),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
-	{EXYNOS4212_GPJ0(2),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
-};
-
-/*
- * M0 Rev0.5 GPIO Sleep Table
- */
-static unsigned int m0_sleep_gpio_table_rev05[][3] = {
-	{EXYNOS4212_GPJ1(0),  S3C_GPIO_SLP_PREV, S3C_GPIO_PULL_NONE}, /* CAM_SW_EN */
-};
-
-/*
- * M0 Rev0.6 GPIO Sleep Table
- */
-static unsigned int m0_sleep_gpio_table_rev06[][3] = {
-	{EXYNOS4_GPC1(4),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
-	{EXYNOS4_GPL0(3),  S3C_GPIO_SLP_PREV,  S3C_GPIO_PULL_NONE}, /* RADIO_EN */
-	{EXYNOS4_GPL2(3),  S3C_GPIO_SLP_INPUT,  S3C_GPIO_PULL_DOWN}, /* NC */
-	{EXYNOS4212_GPJ0(2),  S3C_GPIO_SLP_PREV, S3C_GPIO_PULL_NONE}, /* 3_MICBIAS_EN */
-};
-
-/*
- * M0 Rev0.8 GPIO Sleep Table
- */
-static unsigned int m0_sleep_gpio_table_rev08[][3] = {
-	{EXYNOS4212_GPJ0(1),  S3C_GPIO_SLP_PREV, S3C_GPIO_PULL_NONE}, /* AP_DUMP_INT */
-	{EXYNOS4212_GPM2(2),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* VTCAM_MCLK */
-};
-
-/*
- * M0 Rev0.9 GPIO Sleep Table
- */
-static unsigned int m0_sleep_gpio_table_rev09[][3] = {
-#if defined(CONFIG_SEC_MODEM_M0_TD)
-	{EXYNOS4_GPC1(0), S3C_GPIO_SLP_PREV, S3C_GPIO_PULL_NONE},
-	{EXYNOS4212_GPJ0(1),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN},
-#else
-	{EXYNOS4_GPC1(0), S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
-#endif
-	{EXYNOS4_GPC1(2),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
-	{EXYNOS4_GPC1(3),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
-	{EXYNOS4212_GPM0(0),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
-};
-
-/*
- * M0 Rev1.0 GPIO Sleep Table
- */
-static unsigned int m0_sleep_gpio_table_rev10[][3] = {
-	{EXYNOS4_GPL0(1),  S3C_GPIO_SLP_INPUT,  S3C_GPIO_PULL_DOWN}, /* 2_TOUCH_SCL_1.8V */
-	{EXYNOS4_GPL0(2),  S3C_GPIO_SLP_INPUT,  S3C_GPIO_PULL_DOWN}, /* 2_TOUCH_SDA_1.8V */
-	{EXYNOS4212_GPJ0(3),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* 2_TOUCH_INT */
-};
-
-/*
- * M0 Rev1.1 GPIO Sleep Table
- */
-static unsigned int m0_sleep_gpio_table_rev11[][3] = {
-	{EXYNOS4212_GPJ0(2),  S3C_GPIO_SLP_INPUT, S3C_GPIO_PULL_DOWN}, /* NC */
+static unsigned int m0_sleep_gpio_table_rev01[][3] = {
+	/*  */
 };
 
 struct m0_sleep_table {
@@ -517,24 +469,13 @@ struct m0_sleep_table {
 	{.ptr = _ptr, \
 	.size = ARRAY_SIZE(_ptr)} \
 
- #define GPIO_TABLE_NULL \
+#define GPIO_TABLE_NULL \
 	{.ptr = NULL, \
 	.size = 0} \
 
 static struct m0_sleep_table m0_sleep_table[] = {
-	GPIO_TABLE(m0_sleep_gpio_table),	/* Rev0.0(0x0) - SLP */
-	GPIO_TABLE_NULL,			/* Rev0.0(0x1) - Android */
-	GPIO_TABLE_NULL,
-	GPIO_TABLE_NULL,
-	GPIO_TABLE_NULL,
-	GPIO_TABLE(m0_sleep_gpio_table_rev04),	/* Rev0.4(0x5) */
-	GPIO_TABLE(m0_sleep_gpio_table_rev05),	/* Rev0.5(0x6) */
-	GPIO_TABLE(m0_sleep_gpio_table_rev06),	/* Rev0.6(0x7) */
-	GPIO_TABLE_NULL,
-	GPIO_TABLE(m0_sleep_gpio_table_rev08),	/* Rev0.8(0x9) */
-	GPIO_TABLE(m0_sleep_gpio_table_rev09),	/* Rev0.9(0xA) */
-	GPIO_TABLE(m0_sleep_gpio_table_rev10),	/* Rev1.0(0xB) */
-	GPIO_TABLE(m0_sleep_gpio_table_rev11),	/* Rev1.1(0xC) */
+	GPIO_TABLE(m0_sleep_gpio_table),	/* Rev0.0(0x0) - Universal */
+	GPIO_TABLE(m0_sleep_gpio_table_rev01),	/* Rev0.1(0x1) */
 };
 
 static void config_sleep_gpio_table(int array_size,

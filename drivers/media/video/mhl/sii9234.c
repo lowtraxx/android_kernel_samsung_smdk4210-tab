@@ -696,8 +696,13 @@ static int sii9234_cbus_init(struct sii9234_data *sii9234)
 				/* YCbCr444, RGB444 */
 	if (ret < 0)
 		goto i2c_error_exit;
+#ifdef CONFIG_VIDEO_TVOUT_5_1CH_AUDIO
 	ret = cbus_write_reg(sii9234, 0x80 + DEVCAP_AUD_LINK_MODE, 0x03);
 				/* 8ch, 2ch */
+#else
+	ret = cbus_write_reg(sii9234, 0x80 + DEVCAP_AUD_LINK_MODE, 0x01);
+				/* 2ch */
+#endif
 	if (ret < 0)
 		goto i2c_error_exit;
 	ret = cbus_write_reg(sii9234, 0x80 + DEVCAP_VIDEO_TYPE, 0);
@@ -1655,10 +1660,32 @@ void sii9234_process_msc_work(struct work_struct *work)
 			}
 			break;
 		case CBUS_WRITE_STAT:
+			pr_debug("sii9234: cbus_command_response"
+					"CBUS_WRITE_STAT\n");
+			cbus_read_reg(sii9234, CBUS_MSC_FIRST_DATA_IN_REG,
+					&p_msc_pkt->data_1);
 			break;
 		case CBUS_SET_INT:
+			if ((p_msc_pkt->offset == MHL_RCHANGE_INT) &&
+				(p_msc_pkt->data_1 == MHL_INT_DSCR_CHG)) {
+				/* Write burst final step...
+				   Req->GRT->Write->DSCR */
+				pr_debug("sii9234: MHL_RCHANGE_INT &"
+						"MHL_INT_DSCR_CHG\n");
+			} else if (p_msc_pkt->offset == MHL_RCHANGE_INT &&
+				p_msc_pkt->data_1 == MHL_INT_DCAP_CHG) {
+				sii9234_enqueue_msc_work(sii9234,
+						CBUS_WRITE_STAT,
+						MHL_STATUS_REG_CONNECTED_RDY,
+						MHL_STATUS_DCAP_READY, 0x0);
+			}
 			break;
 		case CBUS_WRITE_BURST:
+			pr_debug("sii9234: cbus_command_response"
+					"MHL_WRITE_BURST\n");
+			p_msc_pkt->command = CBUS_IDLE;
+			sii9234_enqueue_msc_work(sii9234, CBUS_SET_INT,
+					MHL_RCHANGE_INT, MHL_INT_DSCR_CHG, 0x0);
 			break;
 		case CBUS_READ_DEVCAP:
 			ret = cbus_read_reg(sii9234,
@@ -3693,6 +3720,9 @@ static void sii9234_extcon_work(struct work_struct *work)
 		sii9234->extcon_attached ? "attached" : "detached");
 
 	if (sii9234->extcon_attached) {
+#ifdef CONFIG_JACK_MON
+		jack_event_handler("hdmi", 1);
+#endif
 #ifdef CONFIG_SAMSUNG_MHL
 #ifdef CONFIG_MACH_MIDAS
 		sii9234_wake_lock();
@@ -3701,6 +3731,9 @@ static void sii9234_extcon_work(struct work_struct *work)
 #endif
 
 	} else {
+#ifdef CONFIG_JACK_MON
+		jack_event_handler("hdmi", 0);
+#endif
 #ifdef CONFIG_SAMSUNG_MHL
 		mhl_onoff_ex(false);
 #ifdef CONFIG_MACH_MIDAS

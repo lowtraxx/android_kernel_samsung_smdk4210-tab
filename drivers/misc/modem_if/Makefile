@@ -15,7 +15,7 @@ obj-$(CONFIG_CDMA_MODEM_MDM6600) += modem_modemctl_device_mdm6600.o
 obj-$(CONFIG_GSM_MODEM_ESC6270) += modem_modemctl_device_esc6270.o
 
 obj-$(CONFIG_LINK_DEVICE_MIPI) += modem_link_device_mipi.o
-obj-$(CONFIG_LINK_DEVICE_DPRAM) += modem_link_device_dpram.o
+obj-$(CONFIG_LINK_DEVICE_DPRAM) += modem_link_device_dpram.o modem_link_device_dpram_ext_op.o
 obj-$(CONFIG_LINK_DEVICE_USB) += modem_link_device_usb.o modem_link_pm_usb.o
 obj-$(CONFIG_LINK_DEVICE_HSIC) += modem_link_device_hsic.o
 obj-$(CONFIG_LINK_DEVICE_C2C) += modem_link_device_c2c.o

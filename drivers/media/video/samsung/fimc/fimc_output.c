@@ -2831,6 +2831,7 @@ int fimc_dqbuf_output(void *fh, struct v4l2_buffer *b)
 	int idx = -1, ret = -1;
 
 	ctx = &ctrl->out->ctx[ctx_id];
+
 	ret = fimc_pop_outq(ctrl, ctx, &idx);
 	if (ret < 0) {
 		ret = wait_event_timeout(ctrl->wq, (ctx->outq[0] != -1),
@@ -2838,7 +2839,6 @@ int fimc_dqbuf_output(void *fh, struct v4l2_buffer *b)
 		if (ret == 0) {
 			fimc_dump_context(ctrl, ctx);
 			fimc_recover_output(ctrl, ctx);
-			pm_runtime_put_sync(ctrl->dev);
 			fimc_err("[0] out_queue is empty\n");
 			return -EAGAIN;
 		} else if (ret == -ERESTARTSYS) {

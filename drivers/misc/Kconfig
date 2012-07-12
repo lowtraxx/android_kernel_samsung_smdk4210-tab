@@ -63,7 +63,7 @@ config AD525X_DPOT_SPI
 
 config ANDROID_PMEM
 	bool "Android pmem allocator"
-	depends on MACH_U1 || MACH_PX
+	depends on MACH_U1 || MACH_PX || MACH_TRATS
 	default n
 
 if ANDROID_PMEM
@@ -558,6 +558,15 @@ config UART_SELECT
 	help
 	 This is uart selection driver.
 
+config SWITCH_DUAL_MODEM
+	bool "Switch UART/USB to dual MODEM"
+	default n
+	help
+	 This feature can be active when do dual CP project such as Grande.
+	 This can offer an interface to switch UART/USB to AP/CP1/CP2 at *#7284# keystring application.
+	 Need to change UI at *#7284# also to have effect on this.
+	 Use a combination of MAX77693 switch function and GPIO control.
+
 config SEC_DEV_JACK
 	bool "Earjack detection driver for Samsung devices"
 	depends on INPUT
@@ -603,7 +612,21 @@ config MUIC_MAX8997_OVPUI
 	  is used in Chinese models. When OVP is occurred, the battery UI
 	  must be changed to uncharging status.
 
+config MUIC_MAX77693_SEPARATE_MHL_PORT
+	bool "MUIC_MAX77693_SEPARATE_MHL_PORT"
+	depends on MFD_MAX77693
+	default n
+	help
+	  If you say yes here you will get support for the separated
+	  MHL port.
+
 config USBHUB_USB3503
+	bool "USB3503 USB HUB Driver"
+	depends on I2C
+	help
+	 Enables USB HUB USB3503
+
+config USBHUB_USB3503_OTG_CONN
 	bool "USB3503 USB HUB Driver"
 	depends on I2C
 	help

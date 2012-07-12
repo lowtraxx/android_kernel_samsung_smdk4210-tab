@@ -19,6 +19,101 @@
 
 #define IS_CONNECTED(iod, ld) ((iod)->link_types & LINKTYPE((ld)->link_type))
 
+#define MAX_MIF_BUFF_SIZE 0x80000 /* 512kb */
+#define MAX_MIF_SEPA_SIZE 32
+#define MIF_SEPARATOR "IPC_LOGGER(VER1.0)"
+#define MAX_IPC_SKB_SIZE 4096
+#define MAX_LOG_SIZE 64
+
+#define MAX_LOG_CNT (MAX_MIF_BUFF_SIZE / MAX_LOG_SIZE)
+#define MIF_ID_SIZE sizeof(enum mif_log_id)
+
+#define MAX_IPC_LOG_SIZE \
+	(MAX_LOG_SIZE - sizeof(enum mif_log_id) \
+	 - sizeof(unsigned long long) - sizeof(size_t))
+#define MAX_IRQ_LOG_SIZE \
+	(MAX_LOG_SIZE - sizeof(enum mif_log_id) \
+	 - sizeof(unsigned long long) - sizeof(struct mif_irq_map))
+#define MAX_COM_LOG_SIZE \
+	(MAX_LOG_SIZE - sizeof(enum mif_log_id) \
+	 - sizeof(unsigned long long))
+#define MAX_TIM_LOG_SIZE \
+	(MAX_LOG_SIZE - sizeof(enum mif_log_id) \
+	 - sizeof(unsigned long long) - sizeof(struct timespec))
+
+enum mif_log_id {
+	MIF_IPC_RL2AP = 1,
+	MIF_IPC_AP2CP,
+	MIF_IPC_CP2AP,
+	MIF_IPC_AP2RL,
+	MIF_IRQ,
+	MIF_COM,
+	MIF_TIME
+};
+
+struct mif_irq_map {
+	u16 magic;
+	u16 access;
+
+	u16 fmt_tx_in;
+	u16 fmt_tx_out;
+	u16 fmt_rx_in;
+	u16 fmt_rx_out;
+
+	u16 raw_tx_in;
+	u16 raw_tx_out;
+	u16 raw_rx_in;
+	u16 raw_rx_out;
+
+	u16 cp2ap;
+};
+
+struct mif_ipc_block {
+	enum mif_log_id id;
+	unsigned long long time;
+	size_t len;
+	char buff[MAX_IPC_LOG_SIZE];
+};
+
+struct mif_irq_block {
+	enum mif_log_id id;
+	unsigned long long time;
+	struct mif_irq_map map;
+	char buff[MAX_IRQ_LOG_SIZE];
+};
+
+struct mif_common_block {
+	enum mif_log_id id;
+	unsigned long long time;
+	char buff[MAX_COM_LOG_SIZE];
+};
+
+struct mif_time_block {
+	enum mif_log_id id;
+	unsigned long long time;
+	struct timespec epoch;
+	char buff[MAX_TIM_LOG_SIZE];
+};
+
+int mif_dump_dpram(struct io_device *);
+int mif_dump_log(struct modem_shared *, struct io_device *);
+
+#define mif_irq_log(msd, map, data, len) \
+	_mif_irq_log(MIF_IRQ, msd, map, data, len)
+#define mif_com_log(msd, format, ...) \
+	_mif_com_log(MIF_COM, msd, pr_fmt(format), ##__VA_ARGS__)
+#define mif_time_log(msd, epoch, data, len) \
+	_mif_time_log(MIF_TIME, msd, epoch, data, len)
+
+void mif_ipc_log(enum mif_log_id,
+	struct modem_shared *, const char *, size_t);
+void _mif_irq_log(enum mif_log_id,
+	struct modem_shared *, struct mif_irq_map, const char *, size_t);
+void _mif_com_log(enum mif_log_id,
+	struct modem_shared *, const char *, ...);
+void _mif_time_log(enum mif_log_id,
+	struct modem_shared *, struct timespec, const char *, size_t);
+
 /** find_linkdev - find a link device
  * @msd:	struct modem_shared *
  */
@@ -184,5 +279,24 @@ void print_sipc5_link_fmt_frame(const u8 *psrc);
 #define UDP_HDR_SIZE	8
 
 void print_ip4_packet(u8 *ip_pkt);
+bool is_dns_packet(u8 *ip_pkt);
+bool is_syn_packet(u8 *ip_pkt);
+
+int get_sipc5_hdr_size(u8 *buff);
+
+int memcmp16_to_io(const void __iomem *to, void *from, int size);
+int mif_test_dpram(char *dp_name, u8 __iomem *start, u32 size);
+
+static const inline char *get_dev_name(int dev)
+{
+	if (dev == IPC_FMT)
+		return "FMT";
+	else if (dev == IPC_RAW)
+		return "RAW";
+	else if (dev == IPC_RFS)
+		return "RFS";
+	else
+		return "NONE";
+}
 
 #endif/*__MODEM_UTILS_H__*/

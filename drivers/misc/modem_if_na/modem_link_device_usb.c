@@ -35,6 +35,11 @@
 
 #define URB_COUNT	4
 
+extern int factory_mode;
+
+static int enable_autosuspend;
+static int wakelock_held;
+
 static int usb_tx_urb_with_skb(struct usb_link_device *usb_ld,
 		struct sk_buff *skb, struct if_usb_devdata *pipe_data);
 
@@ -432,8 +437,10 @@ static int if_usb_suspend(struct usb_interface *intf, pm_message_t message)
 		if (usb_ld->link_pm_data->cpufreq_unlock)
 			usb_ld->link_pm_data->cpufreq_unlock();
 		*/
-
+		if (wakelock_held) {
+			wakelock_held = 0;
 		wake_unlock(&usb_ld->susplock);
+	}
 	}
 
 	return 0;
@@ -468,6 +475,14 @@ static void wait_enumeration_work(struct work_struct *work)
 {
 	struct usb_link_device *usb_ld = container_of(work,
 		struct usb_link_device, wait_enumeration.work);
+
+	/* Work around code for factory device test & verification.
+	 * To measure device sleep current speedly, do not call silent reset in
+	 * factory mode. CMC22x disconect usb forcely and go sleep
+	 * without normal L3 process if in factory mode. Also AP do. */
+	if (factory_mode)
+		return;
+
 	if (usb_ld->if_usb_connected == 0) {
 		mif_err("USB disconnected and not enumerated for long time\n");
 		usb_change_modem_state(usb_ld, STATE_CRASH_EXIT);
@@ -488,6 +503,7 @@ static int if_usb_resume(struct usb_interface *intf)
 
 		mif_debug("\n");
 		wake_lock(&usb_ld->susplock);
+		wakelock_held = 1;
 
 		/* HACK: Runtime pm does not allow requesting autosuspend from
 		 * resume callback, delayed it after resume */
@@ -527,6 +543,9 @@ static int if_usb_resume(struct usb_interface *intf)
 		SET_SLAVE_WAKEUP(usb_ld->pdata, 1);
 		udelay(100);
 		SET_SLAVE_WAKEUP(usb_ld->pdata, 0);
+
+		if (!link_pm_is_connected(usb_ld))
+			enable_autosuspend = 1;
 
 		/* if_usb_resume() is atomic. post_resume_work is
 		 * a kind of bottom halves
@@ -573,7 +592,10 @@ static void if_usb_disconnect(struct usb_interface *intf)
 	smp_wmb();
 
 	wake_up(&usb_ld->l2_wait);
-
+	if (wakelock_held) {
+		wakelock_held = 0;
+		wake_unlock(&usb_ld->susplock);
+	}
 	/*
 	if (usb_ld->if_usb_connected) {
 		disable_irq_wake(usb_ld->pdata->irq_host_wakeup);
@@ -726,12 +748,15 @@ static int __devinit if_usb_probe(struct usb_interface *intf,
 	usb_ld->host_wake_timeout_flag = 0;
 
 	if (gpio_get_value(usb_ld->pdata->gpio_phone_active)) {
+		struct link_pm_data *pm_data = usb_ld->link_pm_data;
 		int delay = AUTOSUSPEND_DELAY_MS;
 		pm_runtime_set_autosuspend_delay(&usbdev->dev, delay);
 		dev = &usb_ld->usbdev->dev;
 		if (dev->parent) {
 			dev_dbg(&usbdev->dev, "if_usb Runtime PM Start!!\n");
 			usb_enable_autosuspend(usb_ld->usbdev);
+			if (pm_data->block_autosuspend)
+				pm_runtime_forbid(dev);
 		}
 
 		enable_irq_wake(usb_ld->pdata->irq_host_wakeup);
@@ -785,8 +810,12 @@ irqreturn_t usb_resume_irq(int irq, void *data)
 
 	mif_err("< H-WUP %d\n", hwup);
 
-	if (!link_pm_is_connected(usb_ld))
+	if (!link_pm_is_connected(usb_ld) &&
+					!(!hwup && enable_autosuspend)) {
 		return IRQ_HANDLED;
+	} else {
+		enable_autosuspend = 0;
+	}
 
 	if (hwup) {
 		dev = &usb_ld->usbdev->dev;

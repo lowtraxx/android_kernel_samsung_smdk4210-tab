@@ -517,6 +517,7 @@ block:
 		usb_free_urb (urb);
 	}
 	netif_dbg(dev, rx_err, dev->net, "no read resubmitted\n");
+	usb_mark_last_busy(dev->udev);
 }
 
 static void intr_complete (struct urb *urb)
@@ -553,6 +554,7 @@ static void intr_complete (struct urb *urb)
 	if (status != 0)
 		netif_err(dev, timer, dev->net,
 			  "intr resubmit --> %d\n", status);
+	usb_mark_last_busy(dev->udev);
 }
 
 /*-------------------------------------------------------------------------*/
@@ -1063,6 +1065,7 @@ static void tx_complete (struct urb *urb)
 	}
 
 	usb_autopm_put_interface_async(dev->intf);
+	usb_mark_last_busy(dev->udev);
 	(void) defer_bh(dev, skb, &dev->txq, tx_done);
 }
 

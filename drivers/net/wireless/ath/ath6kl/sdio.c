@@ -926,7 +926,9 @@ cut_pwr:
 static int ath6kl_sdio_resume(struct ath6kl *ar)
 {
 
+#if !defined(CONFIG_MACH_P8LTE)
 	ath6kl_sdio_setup_irq_mode(ar);
+#endif
 
 	switch (ar->state) {
 	case ATH6KL_STATE_OFF:
@@ -1288,7 +1290,7 @@ static int ath6kl_sdio_pm_suspend(struct device *device)
 	struct sdio_func *func;
 	struct ath6kl_sdio *ar_sdio;
 	int ret;
-	ath6kl_dbg(ATH6KL_DBG_SUSPEND, "sdio pm resume\n");
+	ath6kl_dbg(ATH6KL_DBG_SUSPEND, "sdio pm suspend\n");
 
 	func = dev_to_sdio_func(device);
 	ar_sdio = sdio_get_drvdata(func);

@@ -27,7 +27,9 @@
 
 #ifdef SEC_BUS_LOCK
 #include <mach/dev.h>
-#define BUS_LOCK_FREQ	267160
+#define SEC_DVFS_LOCK_TIMEOUT_MS	200
+#define SEC_BUS_LOCK_FREQ		267160
+#define SEC_BUS_LOCK_FREQ2	400200
 #endif
 
 #ifdef COOR_WORK_AROUND

@@ -61,6 +61,7 @@
 #define USB_ETH_RNDIS y
 #include "f_rndis.c"
 #include "rndis.c"
+#include "f_diag.c"
 #include "f_dm.c"
 
 MODULE_AUTHOR("Mike Lockwood");
@@ -305,15 +306,6 @@ static ssize_t acm_instances_store(struct device *dev,
 	return size;
 }
 
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-static int acm_function_ctrlrequest(struct android_usb_function *f,
-						struct usb_composite_dev *cdev,
-						const struct usb_ctrlrequest *c)
-{
-	return acm_avd_request(cdev, c);
-}
-#endif
-
 static DEVICE_ATTR(instances, S_IRUGO | S_IWUSR, acm_instances_show, acm_instances_store);
 static struct device_attribute *acm_function_attributes[] = { &dev_attr_instances, NULL };
 
@@ -323,9 +315,6 @@ static struct android_usb_function acm_function = {
 	.cleanup	= acm_function_cleanup,
 	.bind_config	= acm_function_bind_config,
 	.attributes	= acm_function_attributes,
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-	.ctrlrequest	= acm_function_ctrlrequest,
-#endif
 };
 
 
@@ -822,6 +811,63 @@ static struct android_usb_function accessory_function = {
 	.ctrlrequest	= accessory_function_ctrlrequest,
 };
 
+/* DIAG : enabled DIAG clients- "diag[,diag_mdm]" */
+static char diag_clients[32];
+static ssize_t clients_store(
+		struct device *device, struct device_attribute *attr,
+		const char *buff, size_t size)
+{
+	strlcpy(diag_clients, buff, sizeof(diag_clients));
+
+	return size;
+}
+
+static DEVICE_ATTR(clients, S_IWUSR, NULL, clients_store);
+static struct device_attribute *diag_function_attributes[] = {
+				&dev_attr_clients, NULL };
+
+static int diag_function_init(struct android_usb_function *f,
+				 struct usb_composite_dev *cdev)
+{
+	return diag_setup();
+}
+
+static void diag_function_cleanup(struct android_usb_function *f)
+{
+	diag_cleanup();
+}
+
+static int diag_function_bind_config(struct android_usb_function *f,
+					struct usb_configuration *c)
+{
+	char *name;
+	char buf[32], *b;
+	int once = 0, err = -1;
+	int (*notify)(uint32_t, const char *) = NULL;
+
+	strlcpy(buf, diag_clients, sizeof(buf));
+	b = strim(buf);
+	while (b) {
+		notify = NULL;
+		name = strsep(&b, ",");
+
+		if (name) {
+			err = diag_function_add(c, name, notify);
+			if (err)
+				pr_err("%s : usb: diag: Cannot open channel '%s\r\n",
+						 __func__, name);
+		}
+	}
+	return err;
+}
+
+static struct android_usb_function diag_function = {
+	.name		= "diag",
+	.init		= diag_function_init,
+	.cleanup	= diag_function_cleanup,
+	.bind_config	= diag_function_bind_config,
+	.attributes	= diag_function_attributes,
+};
 
 static int dm_function_bind_config(struct android_usb_function *f,
 					struct usb_configuration *c)
@@ -845,6 +891,7 @@ static struct android_usb_function *supported_functions[] = {
 #endif
 	&mass_storage_function,
 	&accessory_function,
+	&diag_function,
 	&dm_function,
 	NULL
 };
@@ -1375,9 +1422,6 @@ android_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *c)
 #endif
 	if (!dev->connected) {
 		dev->connected = 1;
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-		dev->cdev->host_state_info = 1;
-#endif
 		schedule_work(&dev->work);
 	}
 	else if (c->bRequest == USB_REQ_SET_CONFIGURATION && cdev->config) {
@@ -1469,33 +1513,6 @@ static struct platform_driver android_platform_driver = {
 	.driver = { .name = "android_usb", },
 	.probe = android_probe,
 };
-
-/*   Path (/sys/class/android_usb/android0/host_state */
-static ssize_t host_state_switch_show(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-	struct android_dev *a_dev = _android_dev;
-	int value = -1;
-
-	/* Not support Mac */
-	if (get_host_os_type() == MAC_REQUEST)
-		value = 0;
-	else
-		value = a_dev->cdev->host_state_info;
-
-	printk(KERN_DEBUG "usb: host driver show [%d] \r\n", value);
-	return sprintf(buf, "%d\n", value);
-}
-static ssize_t host_state_switch_store(struct device *dev,
-	struct device_attribute *attr, const char *buf, size_t size)
-{
-	int value;
-	sscanf(buf, "%d", &value);
-	return size;
-}
-static DEVICE_ATTR(host_state,
-		 S_IRGRP | S_IWGRP | S_IRUSR | S_IWUSR | S_IROTH,
-		host_state_switch_show, host_state_switch_store);
 #endif
 
 static int __init init(void)
@@ -1539,11 +1556,6 @@ static int __init init(void)
 				__func__);
 		return err;
 	}
-	/* Create sysfs for notification host os state */
-	if (device_create_file(dev->dev, &dev_attr_host_state) < 0)
-		printk(KERN_DEBUG "Failed to create device file(%s)!\n",
-					dev_attr_host_state.attr.name);
-
 	err = platform_driver_register(&android_platform_driver);
 	if (err) {
 		printk(KERN_ERR "usb: %s platform register is failed\n",

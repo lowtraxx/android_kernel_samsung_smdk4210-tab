@@ -266,6 +266,7 @@ static int submit_rx_urb(struct data_bridge *dev, struct urb *rx_urb,
 	if (retval)
 		goto fail;
 
+	usb_mark_last_busy(dev->udev);
 	return 0;
 fail:
 	usb_unanchor_urb(rx_urb);
@@ -1040,6 +1041,7 @@ static struct usb_driver bridge_driver = {
 	.id_table =		bridge_ids,
 	.suspend =		bridge_suspend,
 	.resume =		bridge_resume,
+	.reset_resume =		bridge_resume,
 	.supports_autosuspend =	1,
 };
 

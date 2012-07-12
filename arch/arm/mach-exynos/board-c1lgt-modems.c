@@ -31,12 +31,14 @@
 #include <plat/gpio-cfg.h>
 #include <mach/regs-mem.h>
 #include <plat/regs-srom.h>
+#include <mach/cpufreq.h>
+#include <mach/dev.h>
+#include <linux/cpufreq_pegasusq.h>
 
 #ifdef CONFIG_USBHUB_USB3503
 #include <linux/i2c.h>
 #include <linux/i2c-gpio.h>
 #include <linux/platform_data/usb3503.h>
-#include <mach/cpufreq.h>
 #include <plat/usb-phy.h>
 #endif
 #include <plat/devs.h>
@@ -101,14 +103,7 @@ static void setup_sromc(unsigned csn, struct sromc_cfg *cfg,
 static void setup_dpram_speed(unsigned csn, struct sromc_access_cfg *acc_cfg);
 static int __init init_modem(void);
 
-#ifdef CONFIG_USBHUB_USB3503
 static int host_port_enable(int port, int enable);
-#else
-static int host_port_enable(int port, int enable)
-{
-	return s5p_ehci_port_control(&s5p_device_ehci, port, enable);
-}
-#endif
 
 #ifdef CONFIG_LTE_MODEM_CMC221
 static struct sromc_cfg cmc_idpram_cfg = {
@@ -342,8 +337,8 @@ static struct modem_io_t umts_io_devices[] = {
 	},
 };
 
-static int exynos_cpu_frequency_lock(void);
-static int exynos_cpu_frequency_unlock(void);
+static int exynos_frequency_lock(struct device *dev);
+static int exynos_frequency_unlock(struct device *dev);
 
 static struct modemlink_pm_data umts_link_pm_data = {
 	.name = "umts_link_pm",
@@ -358,13 +353,20 @@ static struct modemlink_pm_data umts_link_pm_data = {
 	.link_reconnect = umts_link_reconnect,
 */
 	.freqlock = ATOMIC_INIT(0),
-	.cpufreq_lock = exynos_cpu_frequency_lock,
-	.cpufreq_unlock = exynos_cpu_frequency_unlock,
+	.freq_lock = exynos_frequency_lock,
+	.freq_unlock = exynos_frequency_unlock,
 
 	.autosuspend_delay_ms = 2000,
 
 	.has_usbhub = true,
 };
+
+bool modem_using_hub(void)
+{
+	return umts_link_pm_data.has_usbhub;
+}
+
+static struct modemlink_pm_link_activectl active_ctl;
 
 static struct modem_data umts_modem_data = {
 	.name = "cmc221",
@@ -380,6 +382,7 @@ static struct modem_data umts_modem_data = {
 	.gpio_slave_wakeup = GPIO_IPC_SLAVE_WAKEUP,
 	.gpio_host_active = GPIO_ACTIVE_STATE,
 	.gpio_host_wakeup = GPIO_IPC_HOST_WAKEUP,
+	.gpio_dynamic_switching = GPIO_AP2CMC_INT2,
 
 	.modem_net = UMTS_NETWORK,
 	.modem_type = SEC_CMC221,
@@ -429,7 +432,20 @@ static struct platform_device umts_modem = {
 	},
 };
 
-#define HUB_STATE_OFF 0
+void set_slave_wake(void)
+{
+	int hostwake = umts_link_pm_data.gpio_link_hostwake;
+	int slavewake = umts_link_pm_data.gpio_link_slavewake;
+
+	if (gpio_get_value(slavewake)) {
+		gpio_direction_output(slavewake, 0);
+		mif_info("> S-WUP 0\n");
+		mdelay(10);
+	}
+	gpio_direction_output(slavewake, 1);
+	mif_info("> S-WUP 1\n");
+}
+
 void set_hsic_lpa_states(int states)
 {
 	int val = gpio_get_value(umts_modem_data.gpio_cp_reset);
@@ -440,19 +456,22 @@ void set_hsic_lpa_states(int states)
 	if (val) {
 		switch (states) {
 		case STATE_HSIC_LPA_ENTER:
-			mif_info("usb3503: lpa_enter\n");
+			mif_info("lpa_enter\n");
+			/* gpio_link_active == gpio_host_active in C1 */
 			gpio_set_value(umts_modem_data.gpio_host_active, 0);
 			mif_info("> H-ACT %d\n", 0);
 			if (pm_data->hub_standby && pm_data->hub_pm_data)
 				pm_data->hub_standby(pm_data->hub_pm_data);
 			break;
 		case STATE_HSIC_LPA_WAKE:
-			mif_info("usb3503: lpa_wake\n");
+			mif_info("lpa_wake\n");
 			gpio_set_value(umts_modem_data.gpio_host_active, 1);
 			mif_info("> H-ACT %d\n", 1);
 			break;
 		case STATE_HSIC_LPA_PHY_INIT:
-			mif_info("usb3503: phy_init\n");
+			mif_info("lpa_phy_init\n");
+			if (!modem_using_hub() && active_ctl.gpio_initialized)
+				set_slave_wake();
 			break;
 		}
 	}
@@ -523,6 +542,8 @@ static void config_umts_modem_gpio(void)
 	unsigned gpio_dpram_int = umts_modem_data.gpio_dpram_int;
 	unsigned gpio_dpram_status = umts_modem_data.gpio_dpram_status;
 	unsigned gpio_dpram_wakeup = umts_modem_data.gpio_dpram_wakeup;
+	unsigned gpio_dynamic_switching =
+			umts_modem_data.gpio_dynamic_switching;
 
 	if (gpio_cp_on) {
 		err = gpio_request(gpio_cp_on, "CMC_ON");
@@ -635,6 +656,21 @@ static void config_umts_modem_gpio(void)
 			s3c_gpio_setpull(gpio_dpram_wakeup, S3C_GPIO_PULL_NONE);
 		}
 	}
+
+	if (gpio_dynamic_switching) {
+		err = gpio_request(gpio_dynamic_switching, "DYNAMIC_SWITCHING");
+		if (err) {
+			mif_err("ERR: fail to request gpio %s\n",
+					"DYNAMIC_SWITCHING\n");
+		} else {
+			gpio_direction_input(gpio_dynamic_switching);
+			s3c_gpio_setpull(gpio_dynamic_switching,
+					S3C_GPIO_PULL_DOWN);
+		}
+	}
+
+	active_ctl.gpio_initialized = 1;
+	mif_info("done\n");
 }
 
 static u8 *cmc_idpram_remap_sfr_region(struct sromc_cfg *cfg)
@@ -1128,55 +1164,104 @@ static int __init init_modem(void)
 late_initcall(init_modem);
 /*device_initcall(init_modem);*/
 
-#ifdef CONFIG_USBHUB_USB3503
-static int (*usbhub_set_mode)(struct usb3503_hubctl *, int);
-static struct usb3503_hubctl *usbhub_ctl;
-
 #ifdef CONFIG_EXYNOS4_CPUFREQ
-static int exynos_cpu_frequency_lock(void)
+static int exynos_frequency_lock(struct device *dev)
 {
-	unsigned int level, freq = 700;
+	unsigned int level, cpufreq = 600; /* 200 ~ 1400 */
+	unsigned int busfreq = 400200; /* 100100 ~ 400200 */
+	int ret = 0;
+	struct device *busdev = dev_get("exynos-busfreq");
 
 	if (atomic_read(&umts_link_pm_data.freqlock) == 0) {
-		if (exynos_cpufreq_get_level(freq * 1000, &level)) {
-			mif_err("ERR: exynos_cpufreq_get_level fail\n");
-			return -EINVAL;
+		/* cpu frequency lock */
+		ret = exynos_cpufreq_get_level(cpufreq * 1000, &level);
+		if (ret < 0) {
+			mif_err("ERR: exynos_cpufreq_get_level fail: %d\n",
+					ret);
+			goto exit;
 		}
 
-		if (exynos_cpufreq_lock(DVFS_LOCK_ID_USB_IF, level)) {
-			mif_err("ERR: exynos_cpufreq_lock fail\n");
-			return -EINVAL;
+		ret = exynos_cpufreq_lock(DVFS_LOCK_ID_USB_IF, level);
+		if (ret < 0) {
+			mif_err("ERR: exynos_cpufreq_lock fail: %d\n", ret);
+			goto exit;
 		}
+
+		/* bus frequncy lock */
+		if (!busdev) {
+			mif_err("ERR: busdev is not exist\n");
+			ret = -ENODEV;
+			goto exit;
+		}
+
+		ret = dev_lock(busdev, dev, busfreq);
+		if (ret < 0) {
+			mif_err("ERR: dev_lock error: %d\n", ret);
+			goto exit;
+		}
+
+		/* lock minimum number of cpu cores */
+		cpufreq_pegasusq_min_cpu_lock(2);
 
 		atomic_set(&umts_link_pm_data.freqlock, 1);
-		mif_debug("<%d> %d MHz\n", level, freq);
+		mif_debug("level=%d, cpufreq=%d MHz, busfreq=%06d\n",
+				level, cpufreq, busfreq);
 	}
-	return 0;
+exit:
+	return ret;
 }
 
-static int exynos_cpu_frequency_unlock(void)
+static int exynos_frequency_unlock(struct device *dev)
 {
+	int ret = 0;
+	struct device *busdev = dev_get("exynos-busfreq");
+
 	if (atomic_read(&umts_link_pm_data.freqlock) == 1) {
+		/* cpu frequency unlock */
 		exynos_cpufreq_lock_free(DVFS_LOCK_ID_USB_IF);
+
+		/* bus frequency unlock */
+		ret = dev_unlock(busdev, dev);
+		if (ret < 0) {
+			mif_err("ERR: dev_unlock error: %d\n", ret);
+			goto exit;
+		}
+
+		/* unlock minimum number of cpu cores */
+		cpufreq_pegasusq_min_cpu_unlock();
+
 		atomic_set(&umts_link_pm_data.freqlock, 0);
-		mif_debug("\n");
+		mif_debug("success\n");
 	}
-	return 0;
+exit:
+	return ret;
 }
 #else
-static int exynos_cpu_frequency_lock(void)
+static int exynos_frequency_lock(void)
 {
 	return 0;
 }
 
-static int exynos_cpu_frequency_unlock(void)
+static int exynos_frequency_unlock(void)
 {
 	return 0;
 }
 #endif
 
+static int (*usbhub_set_mode)(struct usb3503_hubctl *, int);
+static struct usb3503_hubctl *usbhub_ctl;
+
 void set_host_states(struct platform_device *pdev, int type)
 {
+	if (modem_using_hub())
+		return;
+
+	if (active_ctl.gpio_initialized) {
+		mif_err("%s: > H-ACT %d\n", pdev->name, type);
+		gpio_direction_output(umts_link_pm_data.gpio_link_active, type);
+	} else {
+		active_ctl.gpio_request_host_active = 1;
+	}
 }
 
 static int usb3503_hub_handler(void (*set_mode)(void), void *ctl)
@@ -1281,6 +1366,9 @@ static int host_port_enable(int port, int enable)
 
 	mif_info("port(%d) control(%d)\n", port, enable);
 
+	if (!modem_using_hub())
+		return 0;
+
 	if (enable) {
 		err = usbhub_set_mode(usbhub_ctl, USB3503_MODE_HUB);
 		if (err < 0) {
@@ -1312,15 +1400,3 @@ static int host_port_enable(int port, int enable)
 exit:
 	return err;
 }
-#else
-void set_host_states(struct platform_device *pdev, int type)
-{
-	if (active_ctl.gpio_initialized) {
-		mif_err("<%s> Active States =%d, %s\n", pdev->name, type);
-		gpio_direction_output(umts_link_pm_data.gpio_link_active, type);
-	} else {
-		active_ctl.gpio_request_host_active = 1;
-	}
-}
-#endif
-

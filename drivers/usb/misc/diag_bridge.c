@@ -88,7 +88,8 @@ static void diag_bridge_read_cb(struct urb *urb)
 		return;
 	}
 
-	cbs->read_complete_cb(cbs->ctxt,
+	if (cbs && cbs->read_complete_cb)
+		cbs->read_complete_cb(cbs->ctxt,
 			urb->transfer_buffer,
 			urb->transfer_buffer_length,
 			urb->status < 0 ? urb->status : urb->actual_length);
@@ -172,7 +173,8 @@ static void diag_bridge_write_cb(struct urb *urb)
 		return;
 	}
 
-	cbs->write_complete_cb(cbs->ctxt,
+	if (cbs && cbs->write_complete_cb)
+		cbs->write_complete_cb(cbs->ctxt,
 			urb->transfer_buffer,
 			urb->transfer_buffer_length,
 			urb->status < 0 ? urb->status : urb->actual_length);
@@ -455,6 +457,7 @@ static struct usb_driver diag_bridge_driver = {
 	.disconnect =	diag_bridge_disconnect,
 	.suspend =	diag_bridge_suspend,
 	.resume =	diag_bridge_resume,
+	.reset_resume =	diag_bridge_resume,
 	.id_table =	diag_bridge_ids,
 	.supports_autosuspend = 1,
 };

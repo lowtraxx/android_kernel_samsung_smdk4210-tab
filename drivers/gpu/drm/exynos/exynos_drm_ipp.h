@@ -32,21 +32,35 @@
 #define IPP_SET_WRITEBACK	_IOW('F', 304, u32)
 
 /*
+ * A structure of buffer information.
+ *
+ * @handle: Y, Cb, Cr each gem handle.
+ * @base: Y, Cb, Cr each planar address.
+ * @size: Y, Cb, Cr each planar size.
+ */
+struct drm_exynos_ipp_buf_info {
+	unsigned int	handle[EXYNOS_DRM_PLANAR_MAX];
+	dma_addr_t	base[EXYNOS_DRM_PLANAR_MAX];
+	uint64_t size[EXYNOS_DRM_PLANAR_MAX];
+};
+
+/*
  * A structure of source,destination operations.
  *
+ * @set_fmt: set format of image.
  * @set_transf: set transform(rotations, flip).
  * @set_size: set size of region.
- * @set_fmt: set format of image.
  * @set_addr: set address for dma.
  */
 struct exynos_drm_ipp_ops {
+	int (*set_fmt)(struct device *dev, u32 fmt);
 	int (*set_transf)(struct device *dev,
 		enum drm_exynos_degree degree,
 		enum drm_exynos_flip flip);
 	int (*set_size)(struct device *dev, int swap,
 		struct drm_exynos_pos *pos, struct drm_exynos_sz *sz);
-	int (*set_fmt)(struct device *dev, u32 fmt);
-	int (*set_addr)(struct device *dev, dma_addr_t *base, u32 id,
+	int (*set_addr)(struct device *dev,
+			 struct drm_exynos_ipp_buf_info *buf_info, u32 id,
 		enum drm_exynos_ipp_buf_ctrl buf_ctrl);
 };
 
@@ -66,9 +80,8 @@ struct exynos_drm_ipp_ops {
  * @open: this would be called with drm device file open.
  * @close: this would be called with drm device file close.
  * @reset: reset ipp block
- * @check_valid: check valid about format, size, buffer.
+ * @check_property: check property about format, size, buffer.
  * @start: ipp each device start.
- * @check_prepare: check prepare about format, size, buffer.
  * @stop: ipp each device stop.
  */
 struct exynos_drm_ippdrv {
@@ -86,12 +99,10 @@ struct exynos_drm_ippdrv {
 			struct drm_file *file);
 	void (*close)(struct drm_device *drm_dev, struct device *dev,
 			struct drm_file *file);
-	int (*check_valid)(struct device *dev,
+	int (*check_property)(struct device *dev,
 		struct drm_exynos_ipp_property *property);
 	int (*reset)(struct device *dev);
 	int (*start)(struct device *dev, enum drm_exynos_ipp_cmd cmd);
-	int (*check_prepare)(struct device *dev,
-		struct exynos_drm_ippdrv *ippdrv);
 	void (*stop)(struct device *dev, enum drm_exynos_ipp_cmd cmd);
 };
 

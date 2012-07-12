@@ -340,6 +340,7 @@ static int sipc5_recv_misc(struct sk_buff *skb)
 static int sipc5_recv_pdp(struct sk_buff *skb)
 {
 	struct io_device *iod = skbpriv(skb)->iod; /* same with real_iod */
+	struct link_device *ld = skbpriv(skb)->ld;
 	struct net_device *ndev;
 	struct iphdr *iphdr;
 	struct ethhdr *ehdr;
@@ -375,6 +376,12 @@ static int sipc5_recv_pdp(struct sk_buff *skb)
 		skb_pull(skb, sizeof(struct ethhdr));
 	}
 
+	if (unlikely(is_dns_packet(skb->data))) {
+		u8 str[64];
+		snprintf(str, 64, "%s: %s: DNS", __func__, ld->name);
+		pr_ipc(str, skb->data, 20);
+	}
+
 	if (in_interrupt())
 		ret = netif_rx(skb);
 	else
@@ -384,56 +391,6 @@ static int sipc5_recv_pdp(struct sk_buff *skb)
 		mif_info("%s: ERR! netif_rx fail (err %d)\n", iod->name, ret);
 
 	return ret;
-}
-
-/** rx_iodev_work - rx workqueue for raw data
- *
- * @work: workqueue
- *
- * If you throw packets to Network layer directly in interrupt context,
- * sometimes, you'll meet backlog buffer full of Network layer.
- * Applications need some time to get packets from Network layer.
- * And, we need to retry logic when NET_RX_DROP occured. this work ensure
- * retry when netif_rx failed.
- */
-static void rx_iodev_work(struct work_struct *work)
-{
-	int ret = 0;
-	struct sk_buff *skb = NULL;
-	struct io_device *iod = container_of(work, struct io_device,
-				rx_work.work);
-
-	while ((skb = skb_dequeue(&iod->sk_rx_q)) != NULL) {
-		ret = sipc5_recv_pdp(skb);
-		if (ret < 0) {
-			mif_err("%s: sipc5_recv_pdp fail (err %d)",
-				iod->name, ret);
-			dev_kfree_skb_any(skb);
-		} else if (ret == NET_RX_DROP) {
-			mif_err("%s: ret == NET_RX_DROP. retry later.\n",
-					iod->name);
-			schedule_delayed_work(&iod->rx_work,
-						msecs_to_jiffies(100));
-			return;
-		}
-	}
-}
-
-static int rx_multipdp(struct sk_buff *skb)
-{
-	/* in sipc5, this iod == real_iod. not MULTIPDP's iod */
-	struct io_device *iod = skbpriv(skb)->iod;
-
-	if (iod->io_typ != IODEV_NET) {
-		mif_info("%s: ERR! wrong io_type %d\n", iod->name, iod->io_typ);
-		return -EINVAL;
-	}
-
-	skb_queue_tail(&iod->sk_rx_q, skb);
-	mif_debug("%s: sk_rx_qlen %d\n", iod->name, iod->sk_rx_q.qlen);
-
-	schedule_delayed_work(&iod->rx_work, 0);
-	return 0;
 }
 
 static int sipc5_recv_demux(struct link_device *ld, struct sk_buff *skb,
@@ -468,7 +425,7 @@ static int sipc5_recv_demux(struct link_device *ld, struct sk_buff *skb,
 	else if (iod->io_typ == IODEV_MISC)
 		return sipc5_recv_misc(skb);
 	else
-		return rx_multipdp(skb);
+		return sipc5_recv_pdp(skb);
 }
 
 static int sipc5_recv_ipc_from_serial(struct io_device *iod,
@@ -877,7 +834,7 @@ static void iodev_dump_status(struct io_device *iod, void *args)
 {
 	if (iod->format == IPC_RAW && iod->io_typ == IODEV_NET) {
 		struct link_device *ld = get_current_link(iod);
-		mif_log(iod->mc, "%s: %s\n", iod->name, ld->name);
+		mif_com_log(iod->mc->msd, "%s: %s\n", iod->name, ld->name);
 	}
 }
 
@@ -977,9 +934,12 @@ static long misc_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		mif_info("%s: IOCTL_MODEM_BOOT_OFF\n", iod->name);
 		return iod->mc->ops.modem_boot_off(iod->mc);
 
-	case IOCTL_MODEM_START:
-		mif_info("%s: IOCTL_MODEM_START\n", iod->name);
-		return 0;
+	case IOCTL_MODEM_BOOT_DONE:
+		mif_err("%s: IOCTL_MODEM_BOOT_DONE\n", iod->name);
+		if (iod->mc->ops.modem_boot_done)
+			return iod->mc->ops.modem_boot_done(iod->mc);
+		else
+			return 0;
 
 	case IOCTL_MODEM_STATUS:
 		mif_debug("%s: IOCTL_MODEM_STATUS\n", iod->name);
@@ -1055,7 +1015,7 @@ static long misc_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		if (ret < 0)
 			return -EFAULT;
 
-		mif_dump_log(iod->mc, iod);
+		mif_dump_log(iod->mc->msd, iod);
 		return 0;
 
 	case IOCTL_MIF_DPRAM_DUMP:
@@ -1066,7 +1026,7 @@ static long misc_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 				sizeof(unsigned long));
 			if (ret < 0)
 				return -EFAULT;
-			mif_dump_dpram(iod->mc, iod);
+			mif_dump_dpram(iod);
 			return 0;
 		}
 #endif
@@ -1097,6 +1057,7 @@ static ssize_t misc_write(struct file *filp, const char __user *data,
 	unsigned tailroom = 0;
 	size_t tx_size;
 	int ret;
+	struct timespec epoch;
 
 	if (iod->format <= IPC_RFS && iod->id == 0)
 		return -EINVAL;
@@ -1128,7 +1089,9 @@ static ssize_t misc_write(struct file *filp, const char __user *data,
 	}
 
 	if (iod->id == SIPC5_CH_ID_FMT_0) {
-		mif_hex_log(iod->mc, buff, count);
+		getnstimeofday(&epoch);
+		mif_time_log(iod->mc->msd, epoch, NULL, 0);
+		mif_ipc_log(MIF_IPC_RL2AP, iod->mc->msd, skb->data, skb->len);
 	}
 
 	/* store padding */
@@ -1161,6 +1124,8 @@ static ssize_t misc_read(struct file *filp, char *buf, size_t count,
 	struct sk_buff_head *rxq = &iod->sk_rx_q;
 	struct sk_buff *skb;
 	int copied = 0;
+	struct timespec epoch;
+	u8 str[32];
 
 	skb = skb_dequeue(rxq);
 	if (!skb) {
@@ -1169,7 +1134,12 @@ static ssize_t misc_read(struct file *filp, char *buf, size_t count,
 	}
 
 	if (iod->id == SIPC5_CH_ID_FMT_0) {
-		pr_ipc(__func__, skb->data, skb->len);
+		getnstimeofday(&epoch);
+		mif_time_log(iod->mc->msd, epoch, NULL, 0);
+		mif_ipc_log(MIF_IPC_AP2RL, iod->mc->msd, skb->data, skb->len);
+
+		snprintf(str, 32, "%s: %s", __func__, iod->name);
+		pr_ipc(str, skb->data, (skb->len > 16 ? 16 : skb->len));
 	}
 
 	copied = skb->len > count ? count : skb->len;
@@ -1376,7 +1346,6 @@ int sipc5_init_io_device(struct io_device *iod)
 	case IODEV_MISC:
 		init_waitqueue_head(&iod->wq);
 		skb_queue_head_init(&iod->sk_rx_q);
-		INIT_DELAYED_WORK(&iod->rx_work, rx_iodev_work);
 
 		iod->miscdev.minor = MISC_DYNAMIC_MINOR;
 		iod->miscdev.name = iod->name;
@@ -1390,8 +1359,6 @@ int sipc5_init_io_device(struct io_device *iod)
 
 	case IODEV_NET:
 		skb_queue_head_init(&iod->sk_rx_q);
-		INIT_DELAYED_WORK(&iod->rx_work, rx_iodev_work);
-
 		if (iod->use_handover)
 			iod->ndev = alloc_netdev(0, iod->name,
 						vnet_setup_ether);
@@ -1418,7 +1385,6 @@ int sipc5_init_io_device(struct io_device *iod)
 
 	case IODEV_DUMMY:
 		skb_queue_head_init(&iod->sk_rx_q);
-		/* in sipc5, does not need rx_iodev_work on DUMMY */
 
 		iod->miscdev.minor = MISC_DYNAMIC_MINOR;
 		iod->miscdev.name = iod->name;

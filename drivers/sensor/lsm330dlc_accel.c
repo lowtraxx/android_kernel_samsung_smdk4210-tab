@@ -88,7 +88,6 @@ static const struct odr_delay {
 	{    ODR1, 1000000000LL }, /*    1Hz */
 };
 
-/* It will be used, when google fusion is enabled. */
 static const int position_map[][3][3] = {
 	{{-1,  0,  0}, { 0, -1,  0}, { 0,  0,  1} }, /* 0 top/upper-left */
 	{{ 0, -1,  0}, { 1,  0,  0}, { 0,  0,  1} }, /* 1 top/upper-right */

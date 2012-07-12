@@ -1114,6 +1114,8 @@ static int mtpg_function_set_alt(struct usb_function *f,
 				mtp_func->fs.int_in));
 		if (ret) {
 			usb_ep_disable(mtp_func->int_in);
+			pr_err("[%s] Enable Int-In EP error!!!(%d)\n",
+			       __func__, ret);
 			return ret;
 		}
 		mtp_func->int_in->driver_data = mtp_func;
@@ -1126,8 +1128,8 @@ static int mtpg_function_set_alt(struct usb_function *f,
 				mtp_func->fs.bulk_in));
 		if (ret) {
 			usb_ep_disable(mtp_func->bulk_in);
-			pr_err("[%s] Enable Bulk-Out EP error!!! %d\n",
-			       __func__, __LINE__);
+			pr_err("[%s] Enable Bulk-In EP error!!!(%d)\n",
+			       __func__, ret);
 			return ret;
 		}
 		mtp_func->bulk_in->driver_data = mtp_func;
@@ -1137,11 +1139,11 @@ static int mtpg_function_set_alt(struct usb_function *f,
 
 		ret = usb_ep_enable(mtp_func->bulk_out, ep_choose(cdev->gadget,
 				mtp_func->hs.bulk_out,
-				mtp_func->fs.bulk_in));
+				mtp_func->fs.bulk_out));
 		if (ret) {
 			usb_ep_disable(mtp_func->bulk_out);
-			pr_err("[%s] Enable Bulk-In EP error!!! %d\n",
-			       __func__, __LINE__);
+			pr_err("[%s] Enable Bulk-Out EP error!!!(%d)\n",
+			       __func__, ret);
 			return ret;
 		}
 		mtp_func->bulk_out->driver_data = mtp_func;

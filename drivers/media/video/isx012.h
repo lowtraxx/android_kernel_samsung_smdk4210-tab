@@ -40,7 +40,6 @@
 /** Debuging Feature **/
 #define CONFIG_CAM_DEBUG
 /* #define CONFIG_CAM_TRACE */ /* Enable it with CONFIG_CAM_DEBUG */
-#define CONFIG_NEW_STREAMOFF_DEALY
 /* #define CONFIG_CAM_AF_DEBUG *//* Enable it with CONFIG_CAM_DEBUG */
 /* #define DEBUG_WRITE_REGS */
 /***********************************/
@@ -399,8 +398,8 @@ struct isx012_exif {
 
 /* EXIF - flash filed */
 #define EXIF_FLASH_FIRED		(0x01)
-#define EXIF_FLASH_MODE_FIRING		(0x01)
-#define EXIF_FLASH_MODE_SUPPRESSION	(0x01 << 1)
+#define EXIF_FLASH_MODE_FIRING		(0x01 << 3)
+#define EXIF_FLASH_MODE_SUPPRESSION	(0x02 << 3)
 #define EXIF_FLASH_MODE_AUTO		(0x03 << 3)
 
 struct isx012_stream_time {
@@ -561,6 +560,7 @@ struct isx012_state {
 	enum v4l2_pix_format_mode format_mode;
 	enum v4l2_flash_mode flash_mode;
 	enum v4l2_scene_mode scene_mode;
+	enum v4l2_iso_mode iso;
 
 	s32 vt_mode;
 	s32 req_fps;
@@ -569,10 +569,13 @@ struct isx012_state {
 	u32 one_frame_delay_ms;
 	u32 light_level;	/* light level */
 	u32 lux_level_flash;
+	u32 shutter_level_flash;
 	u8 *dbg_level;
 #ifdef CONFIG_DEBUG_NO_FRAME
 	bool frame_check;
 #endif
+	u32 cap_prereq;
+
 	u32 recording:1;
 	u32 hd_videomode:1;
 	u32 flash_on:1;
@@ -581,6 +584,7 @@ struct isx012_state {
 	u32 need_wait_streamoff:1;
 	u32 initialized:1;
 	u32 lowlux_night:1;
+	u32 cap_ready:1;
 };
 
 static inline struct  isx012_state *to_state(struct v4l2_subdev *sd)
@@ -618,12 +622,12 @@ extern int isx012_create_file(struct class *cls);
 #define LUX_LEVEL_FLASH_ON		0x2B
 
 /* Count for loop */
-#define ISX012_CNT_CAPTURE_FRM		100
+#define ISX012_CNT_CAPTURE_FRM		330
 #define ISX012_CNT_CLEAR_VINT		20
 #define ISX012_CNT_AE_STABLE		100 /* for checking MODESEL_FIX */
 #define ISX012_CNT_CAPTURE_AWB		8
 #define ISX012_CNT_OM_CHECK		30
-#define ISX012_CNT_CM_CHECK		180 /* 160 -> 180 */
+#define ISX012_CNT_CM_CHECK		280 /* 160 -> 180 */
 #define ISX012_CNT_STREAMOFF		300
 
 #define AF_SEARCH_COUNT			200
