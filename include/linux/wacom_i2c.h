@@ -57,10 +57,14 @@
 #define WACOM_DELAY_FOR_RST_RISING 200
 /* #define INIT_FIRMWARE_FLASH */
 
+#if !defined(CONFIG_MACH_T0)
+#define WACOM_PDCT_WORK_AROUND
+#endif
 /*PDCT Signal*/
 #define PDCT_NOSIGNAL 1
 #define PDCT_DETECT_PEN 0
-#define WACOM_PDCT_WORK_AROUND
+
+#define WACOM_PRESSURE_MAX 255
 
 #if defined(CONFIG_MACH_P4NOTE) || defined(CONFIG_MACH_P4)
 #ifdef CONFIG_SEC_TOUCHSCREEN_DVFS_LOCK
@@ -72,40 +76,61 @@
 #define WACOM_POSX_OFFSET 170
 #define WACOM_POSY_OFFSET 170
 #define WACOM_IRQ_WORK_AROUND
+#define WACOM_PEN_DETECT
+#define WACOM_MAX_COORD_X WACOM_POSX_MAX
+#define WACOM_MAX_COORD_Y WACOM_POSY_MAX
+
 #elif defined(CONFIG_MACH_Q1_BD)
-#define BOARD_Q1C210
+
 #define COOR_WORK_AROUND
 #define WACOM_IMPORT_FW_ALGO
+#define WACOM_USE_OFFSET_TABLE
+#define WACOM_USE_AVERAGING
+#define WACOM_USE_TILT_OFFSET
+
 #define WACOM_SLEEP_WITH_PEN_SLP
 #define WACOM_HAVE_RESET_CONTROL 1
 #define CONFIG_SEC_TOUCHSCREEN_DVFS_LOCK
 
-#if defined(BOARD_P4ADOBE) && defined(COOR_WORK_AROUND)
-	#define COOR_WORK_AROUND_X_MAX		0x54C0
-	#define COOR_WORK_AROUND_Y_MAX		0x34F8
-	#define COOR_WORK_AROUND_PRESSURE_MAX	0xFF
-#elif (defined(BOARD_Q1OMAP4430) || defined(BOARD_Q1C210))\
-	&& defined(COOR_WORK_AROUND)
-	#define COOR_WORK_AROUND_X_MAX		0x2C80
-	#define COOR_WORK_AROUND_Y_MAX		0x1BD0
-	#define COOR_WORK_AROUND_PRESSURE_MAX	0xFF
-#endif
+#define COOR_WORK_AROUND_X_MAX		0x2C80
+#define COOR_WORK_AROUND_Y_MAX		0x1BD0
+#define COOR_WORK_AROUND_PRESSURE_MAX	0xFF
 
 #define WACOM_I2C_TRANSFER_STYLE
 #if !defined(WACOM_I2C_TRANSFER_STYLE)
 #define WACOM_I2C_RECV_SEND_STYLE
 #endif
 
-#ifdef CONFIG_MACH_Q1_BD
+#define WACOM_MAX_COORD_X 11392
+#define WACOM_MAX_COORD_Y 7120
+#define WACOM_MAX_PRESSURE 0xFF
+
 /* For Android origin */
-#define WACOM_POSX_MAX 7120
-#define WACOM_POSY_MAX 11392
-#define WACOM_PRESSURE_MAX 255
+#define WACOM_POSX_MAX WACOM_MAX_COORD_Y
+#define WACOM_POSY_MAX WACOM_MAX_COORD_X
 
 #define MAX_ROTATION	4
 #define MAX_HAND		2
-#endif	/* CONFIG_MACH_Q1_BD */
-#endif	/* !defined(WACOM_P4) */
+
+#elif defined(CONFIG_MACH_T0)
+
+#define WACOM_MAX_COORD_X 12288
+#define WACOM_MAX_COORD_Y 6912
+#define WACOM_MAX_PRESSURE 0xFF
+
+/* For Android origin */
+#define WACOM_POSX_MAX WACOM_MAX_COORD_Y
+#define WACOM_POSY_MAX WACOM_MAX_COORD_X
+
+#define COOR_WORK_AROUND
+#define WACOM_IMPORT_FW_ALGO
+/*#define WACOM_USE_OFFSET_TABLE*/
+#define WACOM_USE_AVERAGING
+/*#define WACOM_USE_TILT_OFFSET*/
+
+#define MAX_ROTATION	4
+#define MAX_HAND		2
+#endif
 
 #if !defined(WACOM_SLEEP_WITH_PEN_SLP)
 #define WACOM_SLEEP_WITH_PEN_LDO_EN
@@ -161,6 +186,9 @@ struct wacom_g5_platform_data {
 	int max_pressure;
 	int min_pressure;
 	int gpio_pendct;
+#ifdef WACOM_PEN_DETECT
+	int gpio_pen_insert;
+#endif
 	int (*init_platform_hw)(void);
 	int (*exit_platform_hw)(void);
 	int (*suspend_platform_hw)(void);
@@ -190,6 +218,12 @@ struct wacom_i2c {
 	int pen_pressed;
 	int side_pressed;
 	int tool;
+#ifdef WACOM_PEN_DETECT
+	struct delayed_work pen_insert_dwork;
+	bool pen_insert;
+	int gpio_pen_insert;
+#endif
+	bool checksum_result;
 	const char name[NAMEBUF];
 	struct wacom_features *wac_feature;
 	struct wacom_g5_platform_data *wac_pdata;
@@ -203,10 +237,11 @@ struct wacom_i2c {
 #ifdef CONFIG_SEC_TOUCHSCREEN_DVFS_LOCK
 	unsigned int cpufreq_level;
 	bool dvfs_lock_status;
-	bool checksum_result;
 	struct delayed_work dvfs_work;
 #if defined(CONFIG_MACH_P4NOTE)
 	struct device *bus_dev;
+	struct delayed_work query_work;
+	bool pen_type;
 #endif
 #endif
 };

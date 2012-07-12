@@ -353,8 +353,10 @@ static int exynos4_usb_phy1_resume(struct platform_device *pdev)
 	/* 12.04.27 Move start of phy1_resume, If usb cable power on the
 	 * host phy, EHCI resume miss the PDA_ACTVIE, then CP can't send Host
 	 * wakeup Irq */
+#if 0
 	if (!strcmp(pdev->name, "s5p-ehci"))
 		set_hsic_lpa_states(STATE_HSIC_LPA_WAKE);
+#endif
 #endif
 
 	if (exynos4_usb_host_phy_is_on()) {
@@ -434,6 +436,13 @@ static int exynos4_usb_phy1_resume(struct platform_device *pdev)
 		usb_phy_control.lpa_entered = 0;
 		err = 1;
 	}
+#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB) \
+		|| defined(CONFIG_MDM_HSIC_PM)
+	/* HSIC LPA: resume, ap didn't make idle state.
+	 * so.. move to the rear. */
+	if (!strcmp(pdev->name, "s5p-ehci"))
+		set_hsic_lpa_states(STATE_HSIC_LPA_WAKE);
+#endif
 	udelay(80);
 
 	return err;
@@ -1045,7 +1054,8 @@ int exynos4_check_usb_op(void)
 		if (phypwr & (PHY1_STD_FORCE_SUSPEND
 			| EXYNOS4212_HSIC0_FORCE_SUSPEND
 			| EXYNOS4212_HSIC1_FORCE_SUSPEND)) {
-#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB)
+#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB) \
+		|| defined(CONFIG_MDM_HSIC_PM)
 			/* HSIC LPA: LPA USB phy retention reume call the usb
 			* reset resume, so we should let CP to HSIC L3 mode. */
 			set_hsic_lpa_states(STATE_HSIC_LPA_ENTER);
@@ -1211,7 +1221,6 @@ int s5p_usb_phy_resume(struct platform_device *pdev, int type)
 		if (soc_is_exynos4210() ||
 			soc_is_exynos4212() ||
 			soc_is_exynos4412()) {
-			dev_info(&pdev->dev, "host_phy_resume\n");
 #ifdef CONFIG_USB_OHCI_S5P
 			phyclk = readl(EXYNOS4_PHYCLK);
 			phyclk |= PHY1_COMMON_ON_N;
@@ -1326,7 +1335,8 @@ int s5p_usb_phy_init(struct platform_device *pdev, int type)
 		else if (!strcmp(pdev->name, "s5p-ohci"))
 			set_bit(HOST_PHY_OHCI, &usb_phy_control.flags);
 
-#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB)
+#if defined(CONFIG_LINK_DEVICE_HSIC) || defined(CONFIG_LINK_DEVICE_USB) \
+		|| defined(CONFIG_MDM_HSIC_PM)
 		/* HSIC LPA: Let CP know the slave wakeup from LPA wakeup */
 		if (!strcmp(pdev->name, "s5p-ehci"))
 			set_hsic_lpa_states(STATE_HSIC_LPA_PHY_INIT);

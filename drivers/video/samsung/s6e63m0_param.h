@@ -207,7 +207,7 @@ static const unsigned char *ELVSS_TABLE[] = {
 };
 #endif
 
-#if defined(CONFIG_MACH_M0_GRANDECTC)	/* W2013 sw reset */
+#if defined(CONFIG_MACH_M0_GRANDECTC) || defined(CONFIG_MACH_IRON)
 static const unsigned char SEQ_SW_RESET[] = {
 	0x01,
 	0x00, 0x00
@@ -249,7 +249,7 @@ const unsigned char SEQ_DISPLAY_CONDITION_SET1[] = {
 
 const unsigned char SEQ_DISPLAY_CONDITION_SET2[] = {
 	0xF7,
-	0x03, 0x00, 0x00,
+	0x10, 0x00, 0x00,
 };
 
 static const unsigned char SEQ_GAMMA_UPDATE[] = {

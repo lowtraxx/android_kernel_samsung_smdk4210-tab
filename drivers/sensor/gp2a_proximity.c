@@ -39,6 +39,7 @@
 #include <linux/gpio.h>
 #include <mach/gpio-midas.h>
 #include <linux/sensor/sensors_core.h>
+#include <linux/printk.h>
 
 /*********** for debug *******************************/
 #undef DEBUG
@@ -129,8 +130,11 @@ static int proximity_onoff(u8 onoff);
 int is_gp2a030a(void)
 {
 #if defined(CONFIG_MACH_C1) || defined(CONFIG_MACH_C1VZW) || \
-	defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_M3)
+	defined(CONFIG_MACH_M0)
 	return (system_rev != 0 && system_rev != 3);
+#endif
+#if defined(CONFIG_MACH_C2)
+	return 1;
 #endif
 	return 0;
 }
@@ -173,9 +177,7 @@ proximity_enable_store(struct device *dev,
 		proximity_enable = value;
 		proximity_onoff(0);
 		disable_irq_wake(data->irq);
-#ifndef CONFIG_MACH_MIDAS_02_BD
 		data->pdata->gp2a_led_on(false);
-#endif
 	} else if (!data->enabled && value) {	/* proximity power on */
 		data->pdata->gp2a_led_on(true);
 		/*msleep(1); */
@@ -261,13 +263,95 @@ static ssize_t proximity_avg_store(struct device *dev,
 	return size;
 }
 
+static ssize_t proximity_thresh_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	int i;
+	int threshold = 0;
+	u8 (*selected_image)[2] = (is_gp2a030a() ?
+			gp2a_original_image_030a : gp2a_original_image);
+
+	for (i = 0; i < COL; i++) {
+		if (selected_image[i][0] == 0x08)
+			/*PS mode LTH(Loff) */
+			threshold = selected_image[i][1];
+		else if (selected_image[i][0] == 0x09)
+			/*PS mode LTH(Loff) */
+			threshold |= selected_image[i][1]<<8;
+	}
+
+	return sprintf(buf, "prox_threshold = %d\n", threshold);
+}
+
+static ssize_t proximity_thresh_store(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t size)
+{
+	unsigned long threshold;
+	int err = 0;
+	int i;
+	u8 set_value;
+	u8 (*selected_image)[2] = (is_gp2a030a() ?
+			gp2a_original_image_030a : gp2a_original_image);
+
+	err = strict_strtoul(buf, 10, &threshold);
+
+	if (err) {
+		pr_err("%s, conversion %s to number.\n",
+			__func__, buf);
+		return err;
+	}
+
+	for (i = 0; i < COL; i++) {
+		switch (selected_image[i][0]) {
+		case 0x08:
+			/*PS mode LTH(Loff) for low 8bit*/
+			set_value = threshold & 0x00FF;
+			break;
+
+		case 0x09:
+			/*PS mode LTH(Loff) for high 8bit*/
+			set_value = (threshold & 0xFF00) >> 8;
+			break;
+
+		case 0x0A:
+			/*PS mode HTH(Lon) for low 8bit*/
+			set_value = (threshold+1) & 0x00FF;
+			break;
+
+		case 0x0B:
+			/* PS mode HTH(Lon) for high 8bit*/
+			set_value = ((threshold+1) & 0xFF00) >> 8;
+			break;
+
+		default:
+			continue;
+		}
+
+		err = opt_i2c_write(selected_image[i][0], &set_value);
+		if (err) {
+			pr_err("%s : setting error i = %d, err=%d\n",
+			 __func__, i, err);
+			return err;
+		} else
+			selected_image[i][1] = set_value;
+	}
+
+	return size;
+}
+
 static DEVICE_ATTR(enable, 0664, proximity_enable_show, proximity_enable_store);
 static DEVICE_ATTR(prox_avg, 0664, proximity_avg_show, proximity_avg_store);
 static DEVICE_ATTR(state, 0664, proximity_state_show, NULL);
+static DEVICE_ATTR(prox_thresh, S_IRUGO | S_IWUSR,
+			proximity_thresh_show, proximity_thresh_store);
 
 static struct attribute *proximity_attributes[] = {
 	&dev_attr_enable.attr,
 	&dev_attr_state.attr,
+#ifdef CONFIG_SLP
+	&dev_attr_prox_thresh.attr,
+#endif
 	NULL
 };
 
@@ -324,6 +408,9 @@ irqreturn_t gp2a_irq_handler(int irq, void *gp2a_data_p)
 	struct gp2a_data *data = gp2a_data_p;
 
 	wake_lock_timeout(&data->prx_wake_lock, 3 * HZ);
+#ifdef CONFIG_SLP
+	pm_wakeup_event(data->proximity_dev, 0);
+#endif
 
 	schedule_work(&data->work);
 
@@ -653,6 +740,17 @@ static int gp2a_opt_probe(struct platform_device *pdev)
 		       dev_attr_prox_avg.attr.name);
 		goto err_proximity_device_create_file2;
 	}
+
+	if (device_create_file(gp2a->proximity_dev,
+						&dev_attr_prox_thresh) < 0) {
+		pr_err("%s: could not create device file(%s)!\n", __func__,
+		       dev_attr_prox_thresh.attr.name);
+		goto err_proximity_device_create_file3;
+	}
+
+#ifdef CONFIG_SLP
+	device_init_wakeup(gp2a->proximity_dev, true);
+#endif
 	dev_set_drvdata(gp2a->proximity_dev, gp2a);
 
 	device_init_wakeup(&pdev->dev, 1);
@@ -661,6 +759,8 @@ static int gp2a_opt_probe(struct platform_device *pdev)
 
 	return 0;
 
+err_proximity_device_create_file3:
+	device_remove_file(gp2a->proximity_dev, &dev_attr_prox_avg);
 err_proximity_device_create_file2:
 	device_remove_file(gp2a->proximity_dev, &dev_attr_state);
 err_proximity_device_create_file1:
@@ -690,6 +790,24 @@ static int gp2a_opt_remove(struct platform_device *pdev)
 		return -1;
 	}
 
+	if (gp2a->enabled) {
+		disable_irq(gp2a->irq);
+		proximity_enable = 0;
+		proximity_onoff(0);
+		disable_irq_wake(gp2a->irq);
+#ifndef CONFIG_MACH_MIDAS_02_BD
+		gp2a->pdata->gp2a_led_on(false);
+#endif
+		gp2a->enabled = 0;
+	}
+
+	hrtimer_cancel(&gp2a->prox_timer);
+	cancel_work_sync(&gp2a->work_prox);
+	destroy_workqueue(gp2a->prox_wq);
+#ifdef CONFIG_SLP
+	device_init_wakeup(gp2a->proximity_dev, false);
+#endif
+	device_remove_file(gp2a->proximity_dev, &dev_attr_prox_thresh);
 	device_remove_file(gp2a->proximity_dev, &dev_attr_prox_avg);
 	device_remove_file(gp2a->proximity_dev, &dev_attr_state);
 	sensors_classdev_unregister(gp2a->proximity_dev);
@@ -702,7 +820,6 @@ static int gp2a_opt_remove(struct platform_device *pdev)
 			kfree(gp2a->input_dev);
 	}
 
-	destroy_workqueue(gp2a->prox_wq);
 	wake_lock_destroy(&gp2a->prx_wake_lock);
 	device_init_wakeup(&pdev->dev, 0);
 	free_irq(gp2a->irq, gp2a);

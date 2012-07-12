@@ -150,9 +150,13 @@ static void free_dvfs_lock(struct work_struct *work)
 		container_of(work, struct synaptics_drv_data,
 			dvfs_dwork.work);
 
-	dev_unlock(data->bus_dev, data->dev);
-	exynos_cpufreq_lock_free(DVFS_LOCK_ID_TSP);
-	data->dvfs_lock_status = false;
+	if (data->dvfs_lock_status)
+		dev_lock(data->bus_dev,
+			data->dev, SEC_BUS_LOCK_FREQ);
+	else {
+		dev_unlock(data->bus_dev, data->dev);
+		exynos_cpufreq_lock_free(DVFS_LOCK_ID_TSP);
+	}
 }
 void set_dvfs_lock(struct synaptics_drv_data *data, bool en)
 {
@@ -161,18 +165,22 @@ void set_dvfs_lock(struct synaptics_drv_data *data, bool en)
 			&data->cpufreq_level);
 
 	if (en) {
-		cancel_delayed_work(&data->dvfs_dwork);
 		if (!data->dvfs_lock_status) {
+			cancel_delayed_work(&data->dvfs_dwork);
 			dev_lock(data->bus_dev,
-				data->dev, SEC_BUS_LOCK_FREQ);
+				data->dev, SEC_BUS_LOCK_FREQ2);
 			exynos_cpufreq_lock(DVFS_LOCK_ID_TSP,
 				data->cpufreq_level);
 			data->dvfs_lock_status = true;
+			schedule_delayed_work(&data->dvfs_dwork,
+				 msecs_to_jiffies(SEC_DVFS_LOCK_TIMEOUT));
 		}
 	} else {
-		if (data->dvfs_lock_status)
+		if (data->dvfs_lock_status) {
 			schedule_delayed_work(&data->dvfs_dwork,
-				(SEC_DVFS_LOCK_TIMEOUT * HZ) / 1000);
+				msecs_to_jiffies(SEC_DVFS_LOCK_TIMEOUT));
+			data->dvfs_lock_status = false;
+		}
 	}
 }
 #endif	/* CONFIG_SEC_TOUCHSCREEN_DVFS_LOCK */

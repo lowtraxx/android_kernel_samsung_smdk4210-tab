@@ -13,6 +13,7 @@
 #include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/mm.h>
+#include <linux/delay.h>
 
 #if defined(CONFIG_S5P_SYSMMU_TV)
 #include <plat/sysmmu.h>
@@ -521,6 +522,7 @@ static void s5p_tvout_late_resume(struct early_suspend *h)
 #endif
 	suspend_status = 0;
 	tvout_dbg("suspend_status is false\n");
+
 	s5p_tvif_ctrl_resume();
 	s5p_mixer_ctrl_resume();
 	s5p_vp_ctrl_resume();

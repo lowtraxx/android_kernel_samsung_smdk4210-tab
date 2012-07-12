@@ -31,7 +31,7 @@
 
 #ifdef CONFIG_LINK_DEVICE_DPRAM
 #include "modem_link_device_dpram.h"
-int mif_dump_dpram(struct modem_ctl *mc, struct io_device *iod)
+int mif_dump_dpram(struct io_device *iod)
 {
 	struct link_device *ld = get_current_link(iod);
 	struct dpram_link_device *dpld = to_dpram_link_device(ld);
@@ -52,6 +52,7 @@ int mif_dump_dpram(struct modem_ctl *mc, struct io_device *iod)
 		skb = alloc_skb(MAX_IPC_SKB_SIZE, GFP_ATOMIC);
 		if (!skb) {
 			pr_err("[MIF] <%s> alloc skb failed\n", __func__);
+			kfree(buff);
 			return -ENOMEM;
 		}
 		memcpy(skb_put(skb, MAX_IPC_SKB_SIZE),
@@ -65,74 +66,36 @@ int mif_dump_dpram(struct modem_ctl *mc, struct io_device *iod)
 }
 #endif
 
-int mif_dump_log(struct modem_ctl *mc, struct io_device *iod)
+int mif_dump_log(struct modem_shared *msd, struct io_device *iod)
 {
 	struct sk_buff *skb;
 	unsigned long read_len = 0;
+	unsigned long int flags;
 
+	spin_lock_irqsave(&msd->lock, flags);
 	while (read_len < MAX_MIF_BUFF_SIZE) {
 		skb = alloc_skb(MAX_IPC_SKB_SIZE, GFP_ATOMIC);
 		if (!skb) {
 			pr_err("[MIF] <%s> alloc skb failed\n", __func__);
+			spin_unlock_irqrestore(&msd->lock, flags);
 			return -ENOMEM;
 		}
 		memcpy(skb_put(skb, MAX_IPC_SKB_SIZE),
-			mc->storage.utc_zone + read_len, MAX_IPC_SKB_SIZE);
+			msd->storage.addr + read_len, MAX_IPC_SKB_SIZE);
 		skb_queue_tail(&iod->sk_rx_q, skb);
 		read_len += MAX_IPC_SKB_SIZE;
 		wake_up(&iod->wq);
 	}
+	spin_unlock_irqrestore(&msd->lock, flags);
 	return 0;
 }
 
-void mif_hex_log(struct modem_ctl *mc, const char *data, size_t len)
+static unsigned long long get_kernel_time(void)
 {
-	static const char *hex = "0123456789abcdef";
-	char hex_log[MAX_MIF_LOG_SIZE];
-	char *dest = hex_log;
-	int i;
-	size_t avail_len = (len * 3) > MAX_MIF_LOG_SIZE ?
-		(MAX_MIF_LOG_SIZE / 3) : len;
-
-	for (i = 0; i < avail_len; i++) {
-		*dest++ = hex[(data[i] >> 4) & 0xf];
-		*dest++ = hex[data[i] & 0xf];
-		*dest++ = (i == avail_len - 1) ? '\n' : ' ';
-	}
-
-	*dest = '\0';
-	mif_log(mc, "%s", hex_log);
-}
-
-void mif_log(struct modem_ctl *mc, const char *format, ...)
-{
-	va_list args;
 	int this_cpu;
 	unsigned long flags;
-	char *buff;
-	unsigned long ret = 0, wrote_len = 0, writable_len = 0;
 	unsigned long long time;
-	unsigned long nanosec_ram;
-	struct timespec epoch_tm;
-	struct rtc_time tm;
 
-	if (mc->storage.cnt == 0) {
-		getnstimeofday(&epoch_tm);
-		rtc_time_to_tm(epoch_tm.tv_sec, &tm);
-
-		snprintf(mc->storage.utc_zone, MAX_MIF_UTC_SIZE,
-			"[UTC : %02d-%02d  %02d:%02d:%02d.%lu]\n",
-			tm.tm_mon + 1, tm.tm_mday,
-			tm.tm_hour, tm.tm_min, tm.tm_sec, epoch_tm.tv_nsec);
-	}
-
-	/* calculate current address */
-	buff = mc->storage.addr + mc->storage.cnt;
-	/* check free space */
-	writable_len = min((unsigned long)MAX_MIF_LOG_SIZE,
-		((unsigned long)MAX_MIF_IPC_BUFF_SIZE - mc->storage.cnt));
-
-	/* for print boot time */
 	preempt_disable();
 	raw_local_irq_save(flags);
 
@@ -142,22 +105,100 @@ void mif_log(struct modem_ctl *mc, const char *format, ...)
 	preempt_enable();
 	raw_local_irq_restore(flags);
 
-	nanosec_ram = do_div(time, 1000000000);
+	return time;
+}
 
-	/* write boot time into Log buffer */
-	ret = snprintf(buff, writable_len, "[%5lu.%06lu] ",
-		(unsigned long)time, nanosec_ram/1000);
-	wrote_len += (writable_len < ret) ? writable_len : ret;
+void mif_ipc_log(enum mif_log_id id,
+	struct modem_shared *msd, const char *data, size_t len)
+{
+	struct mif_ipc_block *block;
+	unsigned long int flags;
 
-	/* write Log data into Log buffer */
+	spin_lock_irqsave(&msd->lock, flags);
+
+	block = (struct mif_ipc_block *)
+		(msd->storage.addr + (MAX_LOG_SIZE * msd->storage.cnt));
+	msd->storage.cnt = ((msd->storage.cnt + 1) < MAX_LOG_CNT) ?
+		msd->storage.cnt + 1 : 0;
+
+	spin_unlock_irqrestore(&msd->lock, flags);
+
+	block->id = id;
+	block->time = get_kernel_time();
+	block->len = (len > MAX_IPC_LOG_SIZE) ? MAX_IPC_LOG_SIZE : len;
+	memcpy(block->buff, data, block->len);
+}
+
+void _mif_irq_log(enum mif_log_id id, struct modem_shared *msd,
+	struct mif_irq_map map, const char *data, size_t len)
+{
+	struct mif_irq_block *block;
+	unsigned long int flags;
+
+	spin_lock_irqsave(&msd->lock, flags);
+
+	block = (struct mif_irq_block *)
+		(msd->storage.addr + (MAX_LOG_SIZE * msd->storage.cnt));
+	msd->storage.cnt = ((msd->storage.cnt + 1) < MAX_LOG_CNT) ?
+		msd->storage.cnt + 1 : 0;
+
+	spin_unlock_irqrestore(&msd->lock, flags);
+
+	block->id = id;
+	block->time = get_kernel_time();
+	memcpy(&(block->map), &map, sizeof(struct mif_irq_map));
+	if (data)
+		memcpy(block->buff, data,
+			(len > MAX_IRQ_LOG_SIZE) ? MAX_IRQ_LOG_SIZE : len);
+}
+
+void _mif_com_log(enum mif_log_id id,
+	struct modem_shared *msd, const char *format, ...)
+{
+	struct mif_common_block *block;
+	unsigned long int flags;
+	va_list args;
+	int ret;
+
+	spin_lock_irqsave(&msd->lock, flags);
+
+	block = (struct mif_common_block *)
+		(msd->storage.addr + (MAX_LOG_SIZE * msd->storage.cnt));
+	msd->storage.cnt = ((msd->storage.cnt + 1) < MAX_LOG_CNT) ?
+		msd->storage.cnt + 1 : 0;
+
+	spin_unlock_irqrestore(&msd->lock, flags);
+
+	block->id = id;
+	block->time = get_kernel_time();
+
 	va_start(args, format);
-	ret = vsnprintf(buff + wrote_len, writable_len - wrote_len,
-		format, args);
+	ret = vsnprintf(block->buff, MAX_COM_LOG_SIZE, format, args);
 	va_end(args);
-	wrote_len += ((writable_len - wrote_len) < ret) ?
-		(writable_len - wrote_len) : ret;
+}
 
-	mc->storage.cnt = (mc->storage.cnt + wrote_len) % MAX_MIF_IPC_BUFF_SIZE;
+void _mif_time_log(enum mif_log_id id, struct modem_shared *msd,
+	struct timespec epoch, const char *data, size_t len)
+{
+	struct mif_time_block *block;
+	unsigned long int flags;
+
+	spin_lock_irqsave(&msd->lock, flags);
+
+	block = (struct mif_time_block *)
+		(msd->storage.addr + (MAX_LOG_SIZE * msd->storage.cnt));
+	msd->storage.cnt = ((msd->storage.cnt + 1) < MAX_LOG_CNT) ?
+		msd->storage.cnt + 1 : 0;
+
+	spin_unlock_irqrestore(&msd->lock, flags);
+
+	block->id = id;
+	block->time = get_kernel_time();
+	memcpy(&block->epoch, &epoch, sizeof(struct timespec));
+
+	if (data)
+		memcpy(block->buff, data,
+			(len > MAX_IRQ_LOG_SIZE) ? MAX_IRQ_LOG_SIZE : len);
 }
 
 /* dump2hex
@@ -184,22 +225,21 @@ static inline int dump2hex(char *buf, const char *data, size_t len)
 	return dest - buf;
 }
 
-int pr_ipc(const char *func, const char *data, size_t len)
+int pr_ipc(const char *str, const char *data, size_t len)
 {
-	size_t _len = min(len, 16u);
-	unsigned char hexstr[_len ? _len * 3 : 1];
-	struct timespec epoch_tm;
-	struct rtc_time tm;
+	struct timeval tv;
+	struct tm date;
+	unsigned char hexstr[128];
 
-	getnstimeofday(&epoch_tm);
-	rtc_time_to_tm(epoch_tm.tv_sec, &tm);
-	dump2hex(hexstr, data, _len);
+	do_gettimeofday(&tv);
+	time_to_tm((tv.tv_sec - sys_tz.tz_minuteswest * 60), 0, &date);
 
-	return pr_info("<%s> [UTC : %02d-%02d %02d:%02d:%02d.%03lu] %s\n",
-			func, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour,
-			tm.tm_min, tm.tm_sec,
-			(epoch_tm.tv_nsec > 0 ? epoch_tm.tv_nsec / 100000 : 0),
-			hexstr);
+	dump2hex(hexstr, data, (len > 40 ? 40 : len));
+
+	return pr_info("mif: %s: [%02d-%02d %02d:%02d:%02d.%03ld] %s\n",
+			str, date.tm_mon + 1, date.tm_mday,
+			date.tm_hour, date.tm_min, date.tm_sec,
+			(tv.tv_usec > 0 ? tv.tv_usec / 1000 : 0), hexstr);
 }
 
 /* print buffer as hex string */
@@ -211,11 +251,11 @@ int pr_buffer(const char *tag, const char *data, size_t data_len,
 	dump2hex(hexstr, data, len);
 
 	/* don't change this printk to mif_debug for print this as level7 */
-	return printk(KERN_DEBUG "%s(%u): %s%s\n", tag, data_len, hexstr,
+	return printk(KERN_INFO "%s(%u): %s%s\n", tag, data_len, hexstr,
 			len == data_len ? "" : " ...");
 }
 
-/* flow control CMfrom CP, it use in serial devices */
+/* flow control CM from CP, it use in serial devices */
 int link_rx_flowctl_cmd(struct link_device *ld, const char *data, size_t len)
 {
 	struct modem_shared *msd = ld->msd;
@@ -566,7 +606,7 @@ static void print_tcp_header(u8 *pkt)
 	if (tcph->cwr)
 		strcat(tcp_flags, "CWR ");
 	if (tcph->ece)
-		strcat(tcp_flags, "EC");
+		strcat(tcp_flags, "ECE");
 	if (tcph->urg)
 		strcat(tcp_flags, "URG ");
 	if (tcph->ack)
@@ -701,5 +741,170 @@ void print_ip4_packet(u8 *ip_pkt)
 	}
 
 	mif_err("-----------------------------------------------------------\n");
+}
+
+bool is_dns_packet(u8 *ip_pkt)
+{
+	struct iphdr *iph = (struct iphdr *)ip_pkt;
+	struct udphdr *udph = (struct udphdr *)(ip_pkt + (iph->ihl << 2));
+
+	/* If this packet is not a UDP packet, return here. */
+	if (iph->protocol != 17)
+		return false;
+
+	if (ntohs(udph->dest) == 53 || ntohs(udph->source) == 53)
+		return true;
+	else
+		return false;
+}
+
+bool is_syn_packet(u8 *ip_pkt)
+{
+	struct iphdr *iph = (struct iphdr *)ip_pkt;
+	struct tcphdr *tcph = (struct tcphdr *)(ip_pkt + (iph->ihl << 2));
+
+	/* If this packet is not a TCP packet, return here. */
+	if (iph->protocol != 6)
+		return false;
+
+	if (tcph->syn)
+		return true;
+	else
+		return false;
+}
+
+int get_sipc5_hdr_size(u8 *buff)
+{
+	u8 config = buff[0];
+
+	if (unlikely(config & SIPC5_EXT_FIELD_EXIST)) {
+		if (config & SIPC5_CTL_FIELD_EXIST)
+			return SIPC5_HEADER_SIZE_WITH_CTL_FLD;
+		else
+			return SIPC5_HEADER_SIZE_WITH_EXT_LEN;
+	} else {
+		return SIPC5_MIN_HEADER_SIZE;
+	}
+}
+
+int memcmp16_to_io(const void __iomem *to, void *from, int size)
+{
+	u16 *d = (u16 *)to;
+	u16 *s = (u16 *)from;
+	int count = size >> 1;
+	int diff = 0;
+	int i;
+	u16 d1;
+	u16 s1;
+
+	for (i = 0; i < count; i++) {
+		d1 = ioread16(d);
+		s1 = *s;
+		if (d1 != s1) {
+			diff++;
+			mif_info("ERR! [%d] d:0x%04X != s:0x%04X\n", i, d1, s1);
+		}
+		d++;
+		s++;
+	}
+
+	return diff;
+}
+
+int mif_test_dpram(char *dp_name, u8 __iomem *start, u32 size)
+{
+	u8 __iomem *dst;
+	int i;
+	u16 val;
+
+	mif_info("%s: start = 0x%p, size = %d\n", dp_name, start, size);
+
+	dst = start;
+	for (i = 0; i < (size >> 1); i++) {
+		iowrite16((i & 0xFFFF), dst);
+		dst += 2;
+	}
+
+	dst = start;
+	for (i = 0; i < (size >> 1); i++) {
+		val = ioread16(dst);
+		if (val != (i & 0xFFFF)) {
+			mif_info("%s: ERR! dst[%d] 0x%04X != 0x%04X\n",
+				dp_name, i, val, (i & 0xFFFF));
+			return -EINVAL;
+		}
+		dst += 2;
+	}
+
+	dst = start;
+	for (i = 0; i < (size >> 1); i++) {
+		iowrite16(0x00FF, dst);
+		dst += 2;
+	}
+
+	dst = start;
+	for (i = 0; i < (size >> 1); i++) {
+		val = ioread16(dst);
+		if (val != 0x00FF) {
+			mif_info("%s: ERR! dst[%d] 0x%04X != 0x00FF\n",
+				dp_name, i, val);
+			return -EINVAL;
+		}
+		dst += 2;
+	}
+
+	dst = start;
+	for (i = 0; i < (size >> 1); i++) {
+		iowrite16(0x0FF0, dst);
+		dst += 2;
+	}
+
+	dst = start;
+	for (i = 0; i < (size >> 1); i++) {
+		val = ioread16(dst);
+		if (val != 0x0FF0) {
+			mif_info("%s: ERR! dst[%d] 0x%04X != 0x0FF0\n",
+				dp_name, i, val);
+			return -EINVAL;
+		}
+		dst += 2;
+	}
+
+	dst = start;
+	for (i = 0; i < (size >> 1); i++) {
+		iowrite16(0xFF00, dst);
+		dst += 2;
+	}
+
+	dst = start;
+	for (i = 0; i < (size >> 1); i++) {
+		val = ioread16(dst);
+		if (val != 0xFF00) {
+			mif_info("%s: ERR! dst[%d] 0x%04X != 0xFF00\n",
+				dp_name, i, val);
+			return -EINVAL;
+		}
+		dst += 2;
+	}
+
+	dst = start;
+	for (i = 0; i < (size >> 1); i++) {
+		iowrite16(0, dst);
+		dst += 2;
+	}
+
+	dst = start;
+	for (i = 0; i < (size >> 1); i++) {
+		val = ioread16(dst);
+		if (val != 0) {
+			mif_info("%s: ERR! dst[%d] 0x%04X != 0\n",
+				dp_name, i, val);
+			return -EINVAL;
+		}
+		dst += 2;
+	}
+
+	mif_info("%s: PASS!!!\n", dp_name);
+	return 0;
 }
 

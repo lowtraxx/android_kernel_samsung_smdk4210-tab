@@ -42,6 +42,9 @@
 #define FAST_POLL	40	/* 40 sec */
 #define SLOW_POLL	(30*60)	/* 30 min */
 
+/* cut off voltage */
+#define MAX_CUT_OFF_VOL	3500
+
 /* SIOP */
 #define CHARGING_CURRENT_HIGH_LOW_STANDARD	450
 #define CHARGING_CURRENT_USB			500
@@ -74,6 +77,8 @@ static enum power_supply_property sec_battery_properties[] = {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_TECHNOLOGY,
+	POWER_SUPPLY_PROP_CURRENT_NOW,
+	POWER_SUPPLY_PROP_CURRENT_AVG,
 	POWER_SUPPLY_PROP_CAPACITY,
 };
 
@@ -100,8 +105,8 @@ struct battery_info {
 #if defined(CONFIG_TARGET_LOCALE_KOR)
 	u32 batt_vfsoc;
 	u32 batt_soc;
-	u32 batt_current_avg;
 #endif /* CONFIG_TARGET_LOCALE_KOR */
+	u32 batt_current_avg;
 };
 
 struct battery_data {
@@ -538,8 +543,8 @@ static int sec_get_bat_level(struct power_supply *bat_ps)
 	fg_vfsoc = get_fuelgauge_value(FG_VF_SOC);
 #if defined(CONFIG_TARGET_LOCALE_KOR)
 	battery->info.batt_vfsoc = fg_vfsoc;
-	battery->info.batt_current_avg = avg_current;
 #endif /* CONFIG_TARGET_LOCALE_KOR */
+	battery->info.batt_current_avg = avg_current;
 
 /* P4-Creative does not set full flag by force */
 #if !defined(CONFIG_MACH_P4NOTE)
@@ -1069,8 +1074,25 @@ static int sec_bat_get_property(struct power_supply *bat_ps,
 	case POWER_SUPPLY_PROP_TECHNOLOGY:
 		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
 		break;
+	case POWER_SUPPLY_PROP_CURRENT_NOW:
+		val->intval = battery->info.batt_current;
+		break;
+	case POWER_SUPPLY_PROP_CURRENT_AVG:
+		val->intval = battery->info.batt_current_avg;
+		break;
 	case POWER_SUPPLY_PROP_CAPACITY:
+#if defined(CONFIG_MACH_P4NOTE)
+		if ((battery->info.level == 0) &&
+			(battery->info.batt_vol > MAX_CUT_OFF_VOL)) {
+			pr_info("%s: mismatch power off soc(%d) and vol(%d)\n",
+			__func__, battery->info.level, battery->info.batt_vol);
+			val->intval = battery->info.level = 1;
+		} else {
+			val->intval = battery->info.level;
+		}
+#else
 		val->intval = battery->info.level;
+#endif
 		pr_info("level = %d\n", val->intval);
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
@@ -1562,8 +1584,6 @@ static int sec_cable_status_update(struct battery_data *battery, int status)
 	wake_lock(&battery->work_wake_lock);
 	schedule_work(&battery->battery_work);
 
-	pr_debug("call power_supply_changed ");
-
 	return ret;
 }
 
@@ -1602,10 +1622,12 @@ static void sec_bat_status_update(struct power_supply *bat_ps)
 	power_supply_changed(bat_ps);
 	pr_debug("call power_supply_changed");
 
-	pr_info("BAT : soc(%d), vcell(%dmV), curr(%dmA), temp(%d.%d), chg(%d)",
+	pr_info("BAT : soc(%d), vcell(%dmV), curr(%dmA), "
+		"avg curr(%dmA), temp(%d.%d), chg(%d)",
 		battery->info.level,
 		battery->info.batt_vol,
 		battery->info.batt_current,
+		battery->info.batt_current_avg,
 		battery->info.batt_temp/10,
 		battery->info.batt_temp%10,
 		battery->info.charging_enabled);
@@ -1818,6 +1840,7 @@ int _low_battery_alarm_(struct battery_data *battery)
 {
 	int overcurrent_limit_in_soc;
 	int current_soc = get_fuelgauge_value(FG_LEVEL);
+	pr_info("%s\n", __func__);
 
 	if (battery->info.level <= STABLE_LOW_BATTERY_DIFF)
 		overcurrent_limit_in_soc = STABLE_LOW_BATTERY_DIFF_LOWBATT;

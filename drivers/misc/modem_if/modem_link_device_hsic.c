@@ -47,18 +47,6 @@ static int usb_tx_urb_with_skb(struct usb_device *usbdev, struct sk_buff *skb,
 #endif
 static void usb_rx_complete(struct urb *urb);
 
-#if 1
-static void usb_set_autosuspend_delay(struct usb_device *usbdev, int delay)
-{
-	pm_runtime_set_autosuspend_delay(&usbdev->dev, delay);
-}
-#else
-static void usb_set_autosuspend_delay(struct usb_device *usbdev, int delay)
-{
-	usbdev->autosuspend_delay = msecs_to_jiffies(delay);
-}
-#endif
-
 static int start_ipc(struct link_device *ld, struct io_device *iod)
 {
 	struct sk_buff *skb;
@@ -177,7 +165,7 @@ static int usb_rx_submit(struct usb_link_device *usb_ld,
 				pipe_data->rx_buf_size, usb_rx_complete,
 				(void *)pipe_data);
 
-	if (!usb_ld->if_usb_connected || !usb_ld->usbdev)
+	if (pipe_data->disconnected)
 		return -ENOENT;
 
 	usb_mark_last_busy(usb_ld->usbdev);
@@ -441,14 +429,7 @@ static int usb_tx_urb_with_skb(struct usb_device *usbdev, struct sk_buff *skb,
 		mif_err("alloc urb error\n");
 		return -ENOMEM;
 	}
-#if 0
-	int i;
-	for (i = 0; i < skb->len; i++) {
-		if (i > 16)
-			break;
-		mif_err("[0x%02x]", *(skb->data + i));
-	}
-#endif
+
 	urb->transfer_flags = URB_ZERO_PACKET;
 	usb_fill_bulk_urb(urb, pipe_data->usbdev, pipe_data->tx_pipe, skb->data,
 			skb->len, usb_tx_complete, (void *)skb);
@@ -539,7 +520,7 @@ static void usb_tx_work(struct work_struct *work)
 		 * probing, _usb_tx_work return to -ENOENT then runtime usage
 		 * count allways positive and never enter to L2
 		 */
-		if (!usb_ld->if_usb_connected_last) {
+		if (!usb_ld->if_usb_connected) {
 			mif_info("link is available, but if  was not readey\n");
 			goto retry_tx_work;
 		}
@@ -673,7 +654,7 @@ static void link_pm_runtime_start(struct work_struct *work)
 	if (pm_data->usb_ld->usbdev && dev->parent) {
 		mif_info("rpm_status: %d\n",
 			dev->power.runtime_status);
-		usb_set_autosuspend_delay(usbdev, 200);
+		pm_runtime_set_autosuspend_delay(dev, 200);
 		ppdev = dev->parent->parent;
 		pm_runtime_allow(dev);
 		pm_runtime_allow(ppdev);/*ehci*/
@@ -769,12 +750,6 @@ static inline int link_pm_slave_wake(struct link_pm_data *pm_data)
 		while (spin-- && gpio_get_value(pm_data->gpio_link_hostwake) !=
 							HOSTWAKE_TRIGLEVEL)
 			mdelay(5);
-	}
-	/* runtime pm goes to active */
-	if (!gpio_get_value(pm_data->gpio_link_active)) {
-		mif_debug("gpio [H ACTV : %d] set 1\n",
-				gpio_get_value(pm_data->gpio_link_active));
-		gpio_set_value(pm_data->gpio_link_active, 1);
 	}
 	return spin;
 }
@@ -1137,6 +1112,8 @@ static void if_usb_disconnect(struct usb_interface *intf)
 	if (devdata->disconnected)
 		return;
 
+	devdata->usb_ld->if_usb_connected = 0;
+
 	usb_driver_release_interface(to_usb_driver(intf->dev.driver), intf);
 
 	usb_kill_urb(devdata->urb);
@@ -1145,7 +1122,6 @@ static void if_usb_disconnect(struct usb_interface *intf)
 	ppdev = dev->parent->parent;
 	pm_runtime_forbid(ppdev); /*ehci*/
 
-	devdata->usb_ld->if_usb_connected = 0;
 
 	mif_info("put dev 0x%p\n", devdata->usbdev);
 	usb_put_dev(devdata->usbdev);
@@ -1157,7 +1133,6 @@ static void if_usb_disconnect(struct usb_interface *intf)
 	devdata->state = STATE_SUSPENDED;
 	pm_data->ipc_debug_cnt = 0;
 
-	devdata->usb_ld->if_usb_connected_last = 0;
 	devdata->usb_ld->suspended = 0;
 	wake_lock(&pm_data->boot_wake);
 
@@ -1214,9 +1189,6 @@ static int if_usb_set_pipe(struct usb_link_device *usb_ld,
 	return 0;
 }
 
-
-static struct usb_id_info hsic_channel_info;
-
 static int __devinit if_usb_probe(struct usb_interface *intf,
 					const struct usb_device_id *id)
 {
@@ -1239,12 +1211,20 @@ static int __devinit if_usb_probe(struct usb_interface *intf,
 		intf->altsetting->desc.bInterfaceSubClass,
 		intf->altsetting->desc.bInterfaceProtocol);
 
+	/* if usb disconnected, AP try to reconnect 5 times.
+	 * but because if_sub_connected is configured
+	 * at the end of if_usb_probe, there was a chance
+	 * that swk will be called again during enumeration.
+	 * so.. cancel reconnect work_queue in this case. */
+	if (usb_ld->ld.com_state == COM_ONLINE)
+		cancel_delayed_work(&usb_ld->link_pm_data->link_reconnect_work);
+
 	usb_ld->usbdev = usbdev;
 	pm_runtime_forbid(&usbdev->dev);
 	usb_ld->link_pm_data->link_pm_active = false;
 	usb_ld->link_pm_data->dpm_suspending = false;
 	usb_ld->link_pm_data->ipc_debug_cnt = 0;
-	usb_ld->if_usb_is_main = (info == &hsic_channel_info);
+	usb_ld->if_usb_is_main = (info->intf_id != BOOT_DOWN);
 
 	union_hdr = NULL;
 	/* for WMC-ACM compatibility, WMC-ACM use an end-point for control msg*/
@@ -1327,7 +1307,6 @@ static int __devinit if_usb_probe(struct usb_interface *intf,
 	usb_ld->devdata[pipe].disconnected = 0;
 	usb_ld->devdata[pipe].state = STATE_RESUMED;
 
-	usb_ld->if_usb_connected = 1;
 	usb_ld->suspended = 0;
 
 	err = usb_driver_claim_interface(usbdrv, data_intf,
@@ -1358,7 +1337,7 @@ static int __devinit if_usb_probe(struct usb_interface *intf,
 		link_pm_change_modem_state(usb_ld->link_pm_data, STATE_ONLINE);
 
 	if (pipe == IF_USB_CMD_EP || info->intf_id == BOOT_DOWN)
-		usb_ld->if_usb_connected_last = 1;
+		usb_ld->if_usb_connected = 1;
 
 	mif_info("successfully done\n");
 

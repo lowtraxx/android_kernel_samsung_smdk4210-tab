@@ -47,36 +47,28 @@
 #define ROT_STATUS_IRQ_VAL_COMPLETE	1
 #define ROT_STATUS_IRQ_VAL_ILLEGAL	2
 
-/* Sourc Buffer Address */
+/* Buffer Address */
 #define ROT_SRC_BUF_ADDR(n)		(0x30 + ((n) << 2))
+#define ROT_DST_BUF_ADDR(n)		(0x50 + ((n) << 2))
 
-/* Source Buffer Size */
+/* Buffer Size */
 #define ROT_SRC_BUF_SIZE		0x3c
-#define ROT_SRC_BUF_SIZE_H(x)		((x) << 16)
-#define ROT_SRC_BUF_SIZE_W(x)		((x) << 0)
+#define ROT_DST_BUF_SIZE		0x5c
+#define ROT_SET_BUF_SIZE_H(x)		((x) << 16)
+#define ROT_SET_BUF_SIZE_W(x)		((x) << 0)
+#define ROT_GET_BUF_SIZE_H(x)		((x) >> 16)
+#define ROT_GET_BUF_SIZE_W(x)		((x) & 0xffff)
 
-/* Source Crop Position */
+/* Crop Position */
 #define ROT_SRC_CROP_POS		0x40
-#define ROT_SRC_CROP_POS_Y(x)		((x) << 16)
-#define ROT_SRC_CROP_POS_X(x)		((x) << 0)
+#define ROT_DST_CROP_POS		0x60
+#define ROT_CROP_POS_Y(x)		((x) << 16)
+#define ROT_CROP_POS_X(x)		((x) << 0)
 
 /* Source Crop Size */
 #define ROT_SRC_CROP_SIZE		0x44
 #define ROT_SRC_CROP_SIZE_H(x)		((x) << 16)
 #define ROT_SRC_CROP_SIZE_W(x)		((x) << 0)
-
-/* Destination Buffer Address */
-#define ROT_DST_BUF_ADDR(n)		(0x50 + ((n) << 2))
-
-/* Destination Buffer Size */
-#define ROT_DST_BUF_SIZE		0x5c
-#define ROT_DST_BUF_SIZE_H(x)		((x) << 16)
-#define ROT_DST_BUF_SIZE_W(x)		((x) << 0)
-
-/* Destination Crop Position */
-#define ROT_DST_CROP_POS		0x60
-#define ROT_DST_CROP_POS_Y(x)		((x) << 16)
-#define ROT_DST_CROP_POS_X(x)		((x) << 0)
 
 /* Round to nearest aligned value */
 #define ROT_ALIGN(x, align, mask)	(((x) + (1 << ((align) - 1))) & (mask))
@@ -110,7 +102,6 @@ struct rot_context {
 	void __iomem			*regs;
 	int				irq;
 	struct exynos_drm_ippdrv	ippdrv;
-	struct drm_exynos_ipp_property	property;
 	bool				suspended;
 };
 
@@ -124,6 +115,14 @@ static void rotator_reg_set_irq(struct rot_context *rot, bool enable)
 		value &= ~ROT_CONFIG_IRQ;
 
 	writel(value, rot->regs + ROT_CONFIG);
+}
+
+static u32 rotator_reg_get_format(struct rot_context *rot)
+{
+	u32 value = readl(rot->regs + ROT_CONTROL);
+	value &= ROT_CONTROL_FMT_MASK;
+
+	return value;
 }
 
 static void rotator_reg_set_format(struct rot_context *rot, u32 img_fmt)
@@ -228,16 +227,25 @@ static void rotator_reg_set_src_buf_addr(struct rot_context *rot,
 	writel(addr, rot->regs + ROT_SRC_BUF_ADDR(i));
 }
 
+static void rotator_reg_get_src_buf_size(struct rot_context *rot, u32 *w,
+									u32 *h)
+{
+	u32 value = readl(rot->regs + ROT_SRC_BUF_SIZE);
+
+	*w = ROT_GET_BUF_SIZE_W(value);
+	*h = ROT_GET_BUF_SIZE_H(value);
+}
+
 static void rotator_reg_set_src_buf_size(struct rot_context *rot, u32 w, u32 h)
 {
-	u32 value = ROT_SRC_BUF_SIZE_H(h) | ROT_SRC_BUF_SIZE_W(w);
+	u32 value = ROT_SET_BUF_SIZE_H(h) | ROT_SET_BUF_SIZE_W(w);
 
 	writel(value, rot->regs + ROT_SRC_BUF_SIZE);
 }
 
 static void rotator_reg_set_src_crop_pos(struct rot_context *rot, u32 x, u32 y)
 {
-	u32 value = ROT_SRC_CROP_POS_Y(y) | ROT_SRC_CROP_POS_X(x);
+	u32 value = ROT_CROP_POS_Y(y) | ROT_CROP_POS_X(x);
 
 	writel(value, rot->regs + ROT_SRC_CROP_POS);
 }
@@ -255,16 +263,25 @@ static void rotator_reg_set_dst_buf_addr(struct rot_context *rot,
 	writel(addr, rot->regs + ROT_DST_BUF_ADDR(i));
 }
 
+static void rotator_reg_get_dst_buf_size(struct rot_context *rot, u32 *w,
+									u32 *h)
+{
+	u32 value = readl(rot->regs + ROT_DST_BUF_SIZE);
+
+	*w = ROT_GET_BUF_SIZE_W(value);
+	*h = ROT_GET_BUF_SIZE_H(value);
+}
+
 static void rotator_reg_set_dst_buf_size(struct rot_context *rot, u32 w, u32 h)
 {
-	u32 value = ROT_DST_BUF_SIZE_H(h) | ROT_DST_BUF_SIZE_W(w);
+	u32 value = ROT_SET_BUF_SIZE_H(h) | ROT_SET_BUF_SIZE_W(w);
 
 	writel(value, rot->regs + ROT_DST_BUF_SIZE);
 }
 
 static void rotator_reg_set_dst_crop_pos(struct rot_context *rot, u32 x, u32 y)
 {
-	u32 value = ROT_DST_CROP_POS_Y(y) | ROT_DST_CROP_POS_X(x);
+	u32 value = ROT_CROP_POS_Y(y) | ROT_CROP_POS_X(x);
 
 	writel(value, rot->regs + ROT_DST_CROP_POS);
 }
@@ -300,15 +317,15 @@ static irqreturn_t rotator_irq_handler(int irq, void *arg)
 	return IRQ_HANDLED;
 }
 
-static void rotator_align_size(struct rot_context *rot, u32 fmt,
-						struct drm_exynos_pos *pos)
+static void rotator_align_size(struct rot_context *rot, u32 fmt, u32 *hsize,
+								u32 *vsize)
 {
 	struct rot_limit_table *limit_tbl = rot->limit_tbl;
 	struct rot_limit *limit;
 	u32 mask, value;
 
 	/* Get size limit */
-	if (fmt == DRM_FORMAT_XRGB8888)
+	if (fmt == ROT_CONTROL_FMT_RGB888)
 		limit = &limit_tbl->rgb888;
 	else
 		limit = &limit_tbl->ycbcr420_2p;
@@ -317,47 +334,30 @@ static void rotator_align_size(struct rot_context *rot, u32 fmt,
 	mask = ~((1 << limit->align) - 1);
 
 	/* Set aligned width */
-	value = ROT_ALIGN(pos->w, limit->align, mask);
+	value = ROT_ALIGN(*hsize, limit->align, mask);
 	if (value < limit->min_w)
-		pos->w = ROT_MIN(limit->min_w, mask);
+		*hsize = ROT_MIN(limit->min_w, mask);
 	else if (value > limit->max_w)
-		pos->w = ROT_MAX(limit->max_w, mask);
+		*hsize = ROT_MAX(limit->max_w, mask);
 	else
-		pos->w = value;
+		*hsize = value;
 
 	/* Set aligned height */
-	value = ROT_ALIGN(pos->h, limit->align, mask);
+	value = ROT_ALIGN(*vsize, limit->align, mask);
 	if (value < limit->min_h)
-		pos->h = ROT_MIN(limit->min_h, mask);
+		*vsize = ROT_MIN(limit->min_h, mask);
 	else if (value > limit->max_h)
-		pos->h = ROT_MAX(limit->max_h, mask);
+		*vsize = ROT_MAX(limit->max_h, mask);
 	else
-		pos->h = value;
+		*vsize = value;
 }
 
-static int rotator_src_set_transf(struct device *dev,
-					enum drm_exynos_degree degree,
-					enum drm_exynos_flip flip)
+static int rotator_src_set_fmt(struct device *dev, u32 fmt)
 {
 	struct rot_context *rot = dev_get_drvdata(dev);
-	struct drm_exynos_ipp_property *property = &rot->property;
-	struct drm_exynos_ipp_config *config =
-					&property->config[EXYNOS_DRM_OPS_SRC];
 
-	/* Check validity */
-	if (degree != EXYNOS_DRM_DEGREE_0) {
-		DRM_ERROR("invalid degree\n");
-		return -EINVAL;
-	}
-	if (flip != EXYNOS_DRM_FLIP_NONE) {
-		DRM_ERROR("invalid flip\n");
-		return -EINVAL;
-	}
-
-	/* Set transform configuration */
-	config->ops_id = EXYNOS_DRM_OPS_SRC;
-	config->degree = degree;
-	config->flip = flip;
+	/* Set format configuration */
+	rotator_reg_set_format(rot, fmt);
 
 	return 0;
 }
@@ -367,89 +367,63 @@ static int rotator_src_set_size(struct device *dev, int swap,
 						struct drm_exynos_sz *sz)
 {
 	struct rot_context *rot = dev_get_drvdata(dev);
-	struct drm_exynos_ipp_property *property = &rot->property;
-	struct drm_exynos_ipp_config *config =
-					&property->config[EXYNOS_DRM_OPS_SRC];
+	u32 fmt, hsize, vsize;
 
-	/* Check boundary */
-	if ((pos->x + pos->w > sz->hsize) || (pos->y + pos->h > sz->vsize)) {
-		DRM_ERROR("out of bound\n");
-		return -EINVAL;
-	}
+	/* Get format */
+	fmt = rotator_reg_get_format(rot);
+
+	/* Align buffer size */
+	hsize = sz->hsize;
+	vsize = sz->vsize;
+	rotator_align_size(rot, fmt, &hsize, &vsize);
 
 	/* Set buffer size configuration */
-	config->sz.hsize = sz->hsize;
-	config->sz.vsize = sz->vsize;
-
-	rotator_reg_set_src_buf_size(rot, config->sz.hsize, config->sz.vsize);
+	rotator_reg_set_src_buf_size(rot, hsize, vsize);
 
 	/* Set crop image position configuration */
-	config->pos.x = pos->x;
-	config->pos.y = pos->y;
-	config->pos.w = pos->w;
-	config->pos.h = pos->h;
-
-	rotator_reg_set_src_crop_pos(rot, config->pos.x, config->pos.y);
-	rotator_reg_set_src_crop_size(rot, config->pos.w, config->pos.h);
+	rotator_reg_set_src_crop_pos(rot, pos->x, pos->y);
+	rotator_reg_set_src_crop_size(rot, pos->w, pos->h);
 
 	return 0;
 }
 
-static int rotator_src_set_fmt(struct device *dev, u32 fmt)
-{
-	struct rot_context *rot = dev_get_drvdata(dev);
-	struct drm_exynos_ipp_property *property = &rot->property;
-	struct drm_exynos_ipp_config *config =
-					&property->config[EXYNOS_DRM_OPS_SRC];
-
-	/* Check validity */
-	switch (fmt) {
-	case DRM_FORMAT_XRGB8888:
-	case DRM_FORMAT_NV12:
-	case DRM_FORMAT_NV12M:
-		/* No problem */
-		break;
-	default:
-		DRM_ERROR("invalid format\n");
-		return -EINVAL;
-	}
-
-	/* Align size */
-	rotator_align_size(rot, fmt, &config->pos);
-
-	/* Set format configuration */
-	config->fmt = fmt;
-
-	return 0;
-}
-
-static int rotator_src_set_addr(struct device *dev, dma_addr_t *base, u32 id,
+static int rotator_src_set_addr(struct device *dev,
+			     struct drm_exynos_ipp_buf_info *buf_info, u32 id,
 					enum drm_exynos_ipp_buf_ctrl ctrl)
 {
 	struct rot_context *rot = dev_get_drvdata(dev);
-	struct drm_exynos_ipp_property *property = &rot->property;
-	dma_addr_t addr[EXYNOS_DRM_PLANER_MAX];
-	struct drm_exynos_ipp_config *config =
-					&property->config[EXYNOS_DRM_OPS_SRC];
+	dma_addr_t addr[EXYNOS_DRM_PLANAR_MAX];
 	int i;
+	u32 fmt;
 
-	/* Check ctrl */
 	switch (ctrl) {
 	case IPP_BUF_CTRL_MAP:
-	case IPP_BUF_CTRL_UNMAP:
 		/* Set address configuration */
-		for (i = 0; i < EXYNOS_DRM_PLANER_MAX; i++)
-			addr[i] = base[i];
+		for (i = 0; i < EXYNOS_DRM_PLANAR_MAX; i++)
+			addr[i] = buf_info->base[i];
 
-		/* Re-set address of CB(CR) for NV12 format case */
-		if ((ctrl == IPP_BUF_CTRL_MAP) &&
-			(config->fmt == DRM_FORMAT_NV12))
-			addr[EXYNOS_DRM_PLANER_CB] =
-						addr[EXYNOS_DRM_PLANER_Y] +
-						config->pos.w * config->pos.h;
+		/* Get format */
+		fmt = rotator_reg_get_format(rot);
 
-		for (i = 0; i < EXYNOS_DRM_PLANER_MAX; i++)
+		/* Re-set cb planar for NV12 format */
+		if ((fmt == ROT_CONTROL_FMT_YCBCR420_2P) &&
+					(addr[EXYNOS_DRM_PLANAR_CB] == 0x00)) {
+			u32 hsize, vsize;
+
+			/* Get buf size */
+			rotator_reg_get_src_buf_size(rot, &hsize, &vsize);
+
+			/* Set cb planar */
+			addr[EXYNOS_DRM_PLANAR_CB] =
+				addr[EXYNOS_DRM_PLANAR_Y] + hsize * vsize;
+		}
+
+		for (i = 0; i < EXYNOS_DRM_PLANAR_MAX; i++)
 			rotator_reg_set_src_buf_addr(rot, addr[i], i);
+		break;
+	case IPP_BUF_CTRL_UNMAP:
+		for (i = 0; i < EXYNOS_DRM_PLANAR_MAX; i++)
+			rotator_reg_set_src_buf_addr(rot, buf_info->base[i], i);
 		break;
 	default:
 		/* Nothing to do */
@@ -464,41 +438,10 @@ static int rotator_dst_set_transf(struct device *dev,
 					enum drm_exynos_flip flip)
 {
 	struct rot_context *rot = dev_get_drvdata(dev);
-	struct drm_exynos_ipp_property *property = &rot->property;
-	struct drm_exynos_ipp_config *config =
-					&property->config[EXYNOS_DRM_OPS_DST];
-
-	/* Check validity */
-	switch (degree) {
-	case EXYNOS_DRM_DEGREE_0:
-	case EXYNOS_DRM_DEGREE_90:
-	case EXYNOS_DRM_DEGREE_180:
-	case EXYNOS_DRM_DEGREE_270:
-		/* No problem */
-		break;
-	default:
-		DRM_ERROR("invalid degree\n");
-		return -EINVAL;
-	}
-
-	switch (flip) {
-	case EXYNOS_DRM_FLIP_NONE:
-	case EXYNOS_DRM_FLIP_VERTICAL:
-	case EXYNOS_DRM_FLIP_HORIZONTAL:
-		/* No problem */
-		break;
-	default:
-		DRM_ERROR("invalid flip\n");
-		return -EINVAL;
-	}
 
 	/* Set transform configuration */
-	config->ops_id = EXYNOS_DRM_OPS_DST;
-	config->degree = degree;
-	config->flip = flip;
-
-	rotator_reg_set_flip(rot, config->flip);
-	rotator_reg_set_rotation(rot, config->degree);
+	rotator_reg_set_flip(rot, flip);
+	rotator_reg_set_rotation(rot, degree);
 
 	/* Check degree for setting buffer size swap */
 	if ((degree == EXYNOS_DRM_DEGREE_90) ||
@@ -513,117 +456,62 @@ static int rotator_dst_set_size(struct device *dev, int swap,
 						struct drm_exynos_sz *sz)
 {
 	struct rot_context *rot = dev_get_drvdata(dev);
-	struct drm_exynos_ipp_property *property = &rot->property;
-	struct drm_exynos_ipp_config *src_config =
-					&property->config[EXYNOS_DRM_OPS_SRC];
-	struct drm_exynos_ipp_config *config =
-					&property->config[EXYNOS_DRM_OPS_DST];
+	u32 fmt, hsize, vsize;
 
-	/* Check crop image size for NO scale feature */
-	if ((src_config->pos.w != pos->w) || (src_config->pos.h != pos->h)) {
-		DRM_ERROR("different size\n");
-		return -EINVAL;
-	}
+	/* Get format */
+	fmt = rotator_reg_get_format(rot);
 
-	/* Check boundary */
-	if (swap) {
-		if ((pos->x + pos->h > sz->vsize) ||
-			(pos->y + pos->w > sz->hsize)) {
-			DRM_ERROR("out of bound\n");
-			return -EINVAL;
-		}
-	} else {
-		if ((pos->x + pos->w > sz->hsize) ||
-			(pos->y + pos->h > sz->vsize)) {
-			DRM_ERROR("out of bound\n");
-			return -EINVAL;
-		}
-	}
+	/* Align buffer size */
+	hsize = sz->hsize;
+	vsize = sz->vsize;
+	rotator_align_size(rot, fmt, &hsize, &vsize);
 
 	/* Set buffer size configuration */
-	if (swap) {
-		config->sz.hsize = sz->vsize;
-		config->sz.vsize = sz->hsize;
-	} else {
-		config->sz.hsize = sz->hsize;
-		config->sz.vsize = sz->vsize;
-	}
-
-	rotator_reg_set_dst_buf_size(rot, config->sz.hsize, config->sz.vsize);
+	rotator_reg_set_dst_buf_size(rot, hsize, vsize);
 
 	/* Set crop image position configuration */
-	config->pos.x = pos->x;
-	config->pos.y = pos->y;
-
-	rotator_reg_set_dst_crop_pos(rot, config->pos.x, config->pos.y);
+	rotator_reg_set_dst_crop_pos(rot, pos->x, pos->y);
 
 	return 0;
 }
 
-static int rotator_dst_set_fmt(struct device *dev, u32 fmt)
-{
-	struct rot_context *rot = dev_get_drvdata(dev);
-	struct drm_exynos_ipp_property *property = &rot->property;
-	struct drm_exynos_ipp_config *src_config =
-					&property->config[EXYNOS_DRM_OPS_SRC];
-	struct drm_exynos_ipp_config *config =
-					&property->config[EXYNOS_DRM_OPS_DST];
-
-	/* Check validity */
-	switch (fmt) {
-	case DRM_FORMAT_XRGB8888:
-	case DRM_FORMAT_NV12:
-	case DRM_FORMAT_NV12M:
-		/* No problem */
-		break;
-	default:
-		DRM_ERROR("invalid format\n");
-		return -EINVAL;
-	}
-
-	if (src_config->fmt != fmt) {
-		DRM_ERROR("diffrent format\n");
-		return -EINVAL;
-	}
-
-	/* Align size */
-	rotator_align_size(rot, fmt, &config->pos);
-
-	/* Set format configuration */
-	config->fmt = fmt;
-
-	rotator_reg_set_format(rot, config->fmt);
-
-	return 0;
-}
-
-static int rotator_dst_set_addr(struct device *dev, dma_addr_t *base, u32 id,
+static int rotator_dst_set_addr(struct device *dev,
+			     struct drm_exynos_ipp_buf_info *buf_info, u32 id,
 					enum drm_exynos_ipp_buf_ctrl ctrl)
 {
 	struct rot_context *rot = dev_get_drvdata(dev);
-	dma_addr_t addr[EXYNOS_DRM_PLANER_MAX];
-	struct drm_exynos_ipp_property *property = &rot->property;
-	struct drm_exynos_ipp_config *config =
-					&property->config[EXYNOS_DRM_OPS_DST];
+	dma_addr_t addr[EXYNOS_DRM_PLANAR_MAX];
 	int i;
+	u32 fmt;
 
-	/* Check ctrl */
 	switch (ctrl) {
 	case IPP_BUF_CTRL_MAP:
-	case IPP_BUF_CTRL_UNMAP:
 		/* Set address configuration */
-		for (i = 0; i < EXYNOS_DRM_PLANER_MAX; i++)
-			addr[i] = base[i];
+		for (i = 0; i < EXYNOS_DRM_PLANAR_MAX; i++)
+			addr[i] = buf_info->base[i];
 
-		/* Re-set address of CB(CR) for NV12 format case */
-		if ((ctrl == IPP_BUF_CTRL_MAP) &&
-			(config->fmt == DRM_FORMAT_NV12))
-			addr[EXYNOS_DRM_PLANER_CB] =
-						addr[EXYNOS_DRM_PLANER_Y] +
-						config->pos.w * config->pos.h;
+		/* Get format */
+		fmt = rotator_reg_get_format(rot);
 
-		for (i = 0; i < EXYNOS_DRM_PLANER_MAX; i++)
+		/* Re-set cb planar for NV12 format */
+		if ((fmt == ROT_CONTROL_FMT_YCBCR420_2P) &&
+					(addr[EXYNOS_DRM_PLANAR_CB] == 0x00)) {
+			u32 hsize, vsize;
+
+			/* Get buf size */
+			rotator_reg_get_dst_buf_size(rot, &hsize, &vsize);
+
+			/* Set cb planar */
+			addr[EXYNOS_DRM_PLANAR_CB] =
+				addr[EXYNOS_DRM_PLANAR_Y] + hsize * vsize;
+		}
+
+		for (i = 0; i < EXYNOS_DRM_PLANAR_MAX; i++)
 			rotator_reg_set_dst_buf_addr(rot, addr[i], i);
+		break;
+	case IPP_BUF_CTRL_UNMAP:
+		for (i = 0; i < EXYNOS_DRM_PLANAR_MAX; i++)
+			rotator_reg_set_dst_buf_addr(rot, buf_info->base[i], i);
 		break;
 	default:
 		/* Nothing to do */
@@ -634,37 +522,119 @@ static int rotator_dst_set_addr(struct device *dev, dma_addr_t *base, u32 id,
 }
 
 static struct exynos_drm_ipp_ops rot_src_ops = {
-	.set_transf	=	rotator_src_set_transf,
-	.set_size	=	rotator_src_set_size,
 	.set_fmt	=	rotator_src_set_fmt,
+	.set_size	=	rotator_src_set_size,
 	.set_addr	=	rotator_src_set_addr,
 };
 
 static struct exynos_drm_ipp_ops rot_dst_ops = {
 	.set_transf	=	rotator_dst_set_transf,
 	.set_size	=	rotator_dst_set_size,
-	.set_fmt	=	rotator_dst_set_fmt,
 	.set_addr	=	rotator_dst_set_addr,
 };
 
-static int rotator_ippdrv_open(struct drm_device *drm_dev, struct device *dev,
-							struct drm_file *file)
+static int rotator_ippdrv_check_property(struct device *dev,
+				struct drm_exynos_ipp_property *property)
 {
-	struct rot_context *rot = dev_get_drvdata(dev);
+	struct drm_exynos_ipp_config *src_config =
+					&property->config[EXYNOS_DRM_OPS_SRC];
+	struct drm_exynos_ipp_config *dst_config =
+					&property->config[EXYNOS_DRM_OPS_DST];
+	struct drm_exynos_pos *src_pos = &src_config->pos;
+	struct drm_exynos_pos *dst_pos = &dst_config->pos;
+	struct drm_exynos_sz *src_sz = &src_config->sz;
+	struct drm_exynos_sz *dst_sz = &dst_config->sz;
+	bool swap = false;
 
-	clk_enable(rot->clock);
+	/* Check format configuration */
+	if (src_config->fmt != dst_config->fmt) {
+		DRM_DEBUG_KMS("[%s]not support csc feature\n", __func__);
+		return -EINVAL;
+	}
+
+	switch (src_config->fmt) {
+	case DRM_FORMAT_XRGB8888:
+	case DRM_FORMAT_NV12:
+	case DRM_FORMAT_NV12M:
+		/* No problem */
+		break;
+	default:
+		DRM_DEBUG_KMS("[%s]not support format\n", __func__);
+		return -EINVAL;
+	}
+
+	/* Check transform configuration */
+	if (src_config->degree != EXYNOS_DRM_DEGREE_0) {
+		DRM_DEBUG_KMS("[%s]not support source-side rotation\n",
+								__func__);
+		return -EINVAL;
+	}
+
+	switch (dst_config->degree) {
+	case EXYNOS_DRM_DEGREE_90:
+	case EXYNOS_DRM_DEGREE_270:
+		swap = true;
+	case EXYNOS_DRM_DEGREE_0:
+	case EXYNOS_DRM_DEGREE_180:
+		/* No problem */
+		break;
+	default:
+		DRM_DEBUG_KMS("[%s]invalid degree\n", __func__);
+		return -EINVAL;
+	}
+
+	if (src_config->flip != EXYNOS_DRM_FLIP_NONE) {
+		DRM_DEBUG_KMS("[%s]not support source-side flip\n", __func__);
+		return -EINVAL;
+	}
+
+	switch (dst_config->flip) {
+	case EXYNOS_DRM_FLIP_NONE:
+	case EXYNOS_DRM_FLIP_VERTICAL:
+	case EXYNOS_DRM_FLIP_HORIZONTAL:
+		/* No problem */
+		break;
+	default:
+		DRM_DEBUG_KMS("[%s]invalid flip\n", __func__);
+		return -EINVAL;
+	}
+
+	/* Check size configuration */
+	if ((src_pos->x + src_pos->w > src_sz->hsize) ||
+		(src_pos->y + src_pos->h > src_sz->vsize)) {
+		DRM_DEBUG_KMS("[%s]out of source buffer bound\n", __func__);
+		return -EINVAL;
+	}
+
+	if (swap) {
+		if ((dst_pos->x + dst_pos->h > dst_sz->vsize) ||
+			(dst_pos->y + dst_pos->w > dst_sz->hsize)) {
+			DRM_DEBUG_KMS("[%s]out of destination buffer bound\n",
+								__func__);
+			return -EINVAL;
+		}
+
+		if ((src_pos->w != dst_pos->h) || (src_pos->h != dst_pos->w)) {
+			DRM_DEBUG_KMS("[%s]not support scale feature\n",
+								__func__);
+			return -EINVAL;
+		}
+	} else {
+		if ((dst_pos->x + dst_pos->w > dst_sz->hsize) ||
+			(dst_pos->y + dst_pos->h > dst_sz->vsize)) {
+			DRM_DEBUG_KMS("[%s]out of destination buffer bound\n",
+								__func__);
+			return -EINVAL;
+		}
+
+		if ((src_pos->w != dst_pos->w) || (src_pos->h != dst_pos->h)) {
+			DRM_DEBUG_KMS("[%s]not support scale feature\n",
+								__func__);
+			return -EINVAL;
+		}
+	}
 
 	return 0;
-}
-
-static void rotator_ippdrv_close(struct drm_device *drm_dev, struct device *dev,
-							struct drm_file *file)
-{
-	struct rot_context *rot = dev_get_drvdata(dev);
-
-	clk_disable(rot->clock);
-
-	return;
 }
 
 static int rotator_ippdrv_start(struct device *dev, enum drm_exynos_ipp_cmd cmd)
@@ -750,8 +720,7 @@ static int __devinit rotator_probe(struct platform_device *pdev)
 	ippdrv->dev = dev;
 	ippdrv->ops[EXYNOS_DRM_OPS_SRC] = &rot_src_ops;
 	ippdrv->ops[EXYNOS_DRM_OPS_DST] = &rot_dst_ops;
-	ippdrv->open = rotator_ippdrv_open;
-	ippdrv->close = rotator_ippdrv_close;
+	ippdrv->check_property = rotator_ippdrv_check_property;
 	ippdrv->start = rotator_ippdrv_start;
 
 	platform_set_drvdata(pdev, rot);
@@ -848,8 +817,30 @@ static int rotator_resume(struct device *dev)
 }
 #endif
 
+#ifdef CONFIG_PM_RUNTIME
+static int rotator_runtime_suspend(struct device *dev)
+{
+	struct rot_context *rot = dev_get_drvdata(dev);
+
+	clk_disable(rot->clock);
+
+	return 0;
+}
+
+static int rotator_runtime_resume(struct device *dev)
+{
+	struct rot_context *rot = dev_get_drvdata(dev);
+
+	clk_enable(rot->clock);
+
+	return 0;
+}
+#endif
+
 static const struct dev_pm_ops rotator_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(rotator_suspend, rotator_resume)
+	SET_RUNTIME_PM_OPS(rotator_runtime_suspend, rotator_runtime_resume,
+									NULL)
 };
 
 struct platform_driver rotator_driver = {

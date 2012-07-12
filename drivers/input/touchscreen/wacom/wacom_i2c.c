@@ -26,7 +26,7 @@
 #include <linux/firmware.h>
 #include "wacom_i2c_func.h"
 #include "wacom_i2c_flash.h"
-#ifdef COOR_WORK_AROUND
+#ifdef WACOM_IMPORT_FW_ALGO
 #include "wacom_i2c_coord_tables.h"
 #endif
 
@@ -124,7 +124,7 @@ int wacom_i2c_load_fw(struct i2c_client *client)
 	return -1;
 }
 
-#if defined(CONFIG_MACH_Q1_BD)
+#if defined(CONFIG_MACH_Q1_BD) || defined(CONFIG_MACH_T0)
 int wacom_i2c_firm_update(struct wacom_i2c *wac_i2c)
 {
 	int ret;
@@ -190,10 +190,15 @@ static void update_work_func(struct work_struct *work)
 		/* Reset IC */
 		wacom_i2c_reset_hw(wac_i2c->wac_pdata);
 	}
+
+#if defined(CONFIG_MACH_P4NOTE)
+	schedule_delayed_work(&wac_i2c->query_work, HZ / 5);
+#else
 	msleep(800);
 	printk(KERN_DEBUG "[E-PEN] flashed.(%d)\n", ret);
 
 	wacom_i2c_query(wac_i2c);
+#endif
 
 	enable_irq(wac_i2c->irq);
 #ifdef WACOM_PDCT_WORK_AROUND
@@ -229,6 +234,79 @@ static irqreturn_t wacom_interrupt_pdct(int irq, void *dev_id)
 }
 #endif
 
+#ifdef WACOM_PEN_DETECT
+static void pen_insert_work(struct work_struct *work)
+{
+	struct wacom_i2c *wac_i2c =
+	    container_of(work, struct wacom_i2c, pen_insert_dwork.work);
+
+	wac_i2c->pen_insert = gpio_get_value(wac_i2c->gpio_pen_insert);
+	printk(KERN_DEBUG "[E-PEN] %s : %d\n",
+		__func__, wac_i2c->pen_insert);
+
+	input_report_switch(wac_i2c->input_dev,
+		SW_PEN_INSERT, wac_i2c->pen_insert);
+	input_sync(wac_i2c->input_dev);
+}
+static irqreturn_t wacom_pen_detect(int irq, void *dev_id)
+{
+	struct wacom_i2c *wac_i2c = dev_id;
+
+	cancel_delayed_work_sync(&wac_i2c->pen_insert_dwork);
+	schedule_delayed_work(&wac_i2c->pen_insert_dwork, HZ / 2);
+	return IRQ_HANDLED;
+}
+static int wacom_i2c_input_open(struct input_dev *dev)
+{
+	struct wacom_i2c *wac_i2c = input_get_drvdata(dev);
+
+#ifdef WACOM_PEN_DETECT
+	int ret = 0;
+
+	INIT_DELAYED_WORK(&wac_i2c->pen_insert_dwork, pen_insert_work);
+
+	ret =
+		request_threaded_irq(
+			gpio_to_irq(wac_i2c->gpio_pen_insert), NULL,
+			wacom_pen_detect,
+			IRQF_DISABLED | IRQF_TRIGGER_RISING |
+			IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+			"pen_insert", wac_i2c);
+	if (ret < 0)
+		printk(KERN_ERR
+			"[E-PEN]: failed to request pen insert irq\n");
+
+	/* update the current status */
+	schedule_delayed_work(&wac_i2c->pen_insert_dwork, HZ / 2);
+#endif
+
+	return 0;
+}
+
+static void wacom_i2c_input_close(struct input_dev *dev)
+{
+	/* TBD */
+}
+
+#endif
+
+#if defined(CONFIG_MACH_P4NOTE)
+static void query_dwork(struct work_struct *work)
+{
+	struct wacom_i2c *wac_i2c =
+	    container_of(work, struct wacom_i2c, query_work.work);
+
+	if ((0 != wac_i2c->wac_feature->fw_version) &&
+		(0xff != wac_i2c->wac_feature->fw_version) &&
+		(0xffff != wac_i2c->wac_feature->fw_version))
+		return ;
+
+	wacom_i2c_reset_hw(wac_i2c->wac_pdata);
+	wacom_i2c_query(wac_i2c);
+	schedule_delayed_work(&wac_i2c->query_work, HZ / 5);
+}
+#endif
+
 static void wacom_i2c_set_input_values(struct i2c_client *client,
 				       struct wacom_i2c *wac_i2c,
 				       struct input_dev *input_dev)
@@ -239,6 +317,13 @@ static void wacom_i2c_set_input_values(struct i2c_client *client,
 	input_dev->id.bustype = BUS_I2C;
 	input_dev->dev.parent = &client->dev;
 	input_dev->evbit[0] |= BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+
+#ifdef WACOM_PEN_DETECT
+	input_dev->evbit[0] |= BIT_MASK(EV_SW);
+	input_dev->open = wacom_i2c_input_open;
+	input_dev->close = wacom_i2c_input_close;
+	input_set_capability(input_dev, EV_SW, SW_PEN_INSERT);
+#endif
 
 	__set_bit(ABS_X, input_dev->absbit);
 	__set_bit(ABS_Y, input_dev->absbit);
@@ -384,6 +469,11 @@ static ssize_t epen_firmware_update_store(struct device *dev,
 {
 	struct wacom_i2c *wac_i2c = dev_get_drvdata(dev);
 	int ret = 1;
+	u32 fw_ic_ver = wac_i2c->wac_feature->fw_version;
+#if defined(CONFIG_MACH_P4NOTE)
+	bool check_version = true;
+#endif
+	bool need_update = false;
 
 	disable_irq(wac_i2c->irq);
 #ifdef WACOM_PDCT_WORK_AROUND
@@ -406,25 +496,29 @@ static ssize_t epen_firmware_update_store(struct device *dev,
 	case 'B':
 		printk(KERN_ERR
 		       "[E-PEN] Start firmware flashing (kernel image).\n");
-#ifdef CONFIG_MACH_Q1_BD
+#if defined(CONFIG_MACH_Q1_BD) || defined(CONFIG_MACH_T0)
 		ret = wacom_i2c_firm_update(wac_i2c);
 #else
 		ret = wacom_i2c_flash(wac_i2c);
 #endif
 		break;
 
-#ifdef CONFIG_MACH_Q1_BD
+#if defined(CONFIG_MACH_Q1_BD)\
+	|| defined(CONFIG_MACH_T0)
 	case 'R':
+		if (fw_ic_ver <
+			Firmware_version_of_file)
+			need_update = true;
+#ifdef CONFIG_MACH_Q1_BD
 		/* Q1 board rev 0.3 */
-		if (system_rev >= 6) {
-			if (wac_i2c->wac_feature->fw_version <
-			    Firmware_version_of_file)
-				ret = wacom_i2c_firm_update(wac_i2c);
-		} else {
-			if (wac_i2c->wac_feature->fw_version !=
-			    Firmware_version_of_file)
-				ret = wacom_i2c_firm_update(wac_i2c);
-		}
+		if (system_rev < 6)
+			if (fw_ic_ver !=
+				Firmware_version_of_file)
+				need_update = true;
+#endif
+		if (need_update)
+			ret = wacom_i2c_firm_update(wac_i2c);
+
 		if (ret > 0) {
 			enable_irq(wac_i2c->irq);
 #ifdef WACOM_PDCT_WORK_AROUND
@@ -437,14 +531,16 @@ static ssize_t epen_firmware_update_store(struct device *dev,
 
 #if defined(CONFIG_MACH_P4NOTE)
 	case 'W':
-		if (Firmware_version_of_file !=
-			wac_i2c->wac_feature->fw_version)
+		cancel_delayed_work_sync(&wac_i2c->query_work);
+		if ((Firmware_version_of_file > fw_ic_ver)
+			|| (0xffff == fw_ic_ver))
 			schedule_work(&wac_i2c->update_work);
+		check_version = false;
 		break;
 #endif
 
 	default:
-		printk(KERN_ERR "[E-PEN] wrong parameter.\n");
+		printk(KERN_ERR "[E-PEN] '%c' wrong parameter.\n", *buf);
 		goto param_err;
 		break;
 	}
@@ -457,7 +553,11 @@ static ssize_t epen_firmware_update_store(struct device *dev,
 	printk(KERN_ERR "[E-PEN] Finish firmware flashing.\n");
 
 	msleep(800);
-	wacom_i2c_query(wac_i2c);
+#if defined(CONFIG_MACH_P4NOTE)
+	if (check_version)
+#endif
+		wacom_i2c_query(wac_i2c);
+
 	wac_i2c->wac_feature->firm_update_status = 2;
 
 	enable_irq(wac_i2c->irq);
@@ -641,7 +741,10 @@ static ssize_t epen_checksum_store(struct device *dev,
 	sscanf(buf, "%d", &val);
 
 #if defined(CONFIG_MACH_P4NOTE)
-	return count;
+	if (wac_i2c->checksum_result)
+		return count;
+	else
+		check_version = true;
 #else
 	if (wac_i2c->wac_feature->fw_version >= 0x31E)
 		check_version = true;
@@ -682,6 +785,32 @@ static ssize_t epen_checksum_result_show(struct device *dev,
 	}
 }
 
+#if defined(CONFIG_MACH_P4NOTE)
+static ssize_t epen_type_show(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct wacom_i2c *wac_i2c = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%d\n", wac_i2c->pen_type);
+}
+
+static ssize_t epen_type_store(struct device *dev,
+				   struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct wacom_i2c *wac_i2c = dev_get_drvdata(dev);
+	bool check_version = false;
+	int val;
+
+	sscanf(buf, "%d", &val);
+
+	wac_i2c->pen_type = !!val;
+
+	return count;
+}
+#endif
+
 /* firmware update */
 static DEVICE_ATTR(epen_firm_update,
 		   S_IWUSR | S_IWGRP, NULL, epen_firmware_update_store);
@@ -694,6 +823,8 @@ static DEVICE_ATTR(epen_firm_version, S_IRUGO, epen_firm_version_show, NULL);
 #if defined(CONFIG_MACH_P4NOTE)
 static DEVICE_ATTR(epen_sampling_rate,
 		   S_IWUSR | S_IWGRP, NULL, epen_sampling_rate_store);
+static DEVICE_ATTR(epen_type,
+		S_IRUGO | S_IWUSR | S_IWGRP, epen_type_show, epen_type_store);
 #else
 /* screen rotation */
 static DEVICE_ATTR(epen_rotation, S_IWUSR | S_IWGRP, NULL, epen_rotation_store);
@@ -716,6 +847,7 @@ static struct attribute *epen_attributes[] = {
 	&dev_attr_epen_firm_version.attr,
 #if defined(CONFIG_MACH_P4NOTE)
 	&dev_attr_epen_sampling_rate.attr,
+	&dev_attr_epen_type.attr,
 #else
 	&dev_attr_epen_rotation.attr,
 	&dev_attr_epen_hand.attr,
@@ -777,6 +909,10 @@ static int wacom_i2c_probe(struct i2c_client *client,
 	wac_i2c->irq_pdct = gpio_to_irq(pdata->gpio_pendct);
 #endif
 
+#ifdef WACOM_PEN_DETECT
+	wac_i2c->gpio_pen_insert = pdata->gpio_pen_insert;
+#endif
+
 	/*Change below if irq is needed */
 	wac_i2c->irq_flag = 1;
 
@@ -798,7 +934,7 @@ static int wacom_i2c_probe(struct i2c_client *client,
 	wacom_i2c_reset_hw(wac_i2c->wac_pdata);
 #endif
 
-#if defined(CONFIG_MACH_Q1_BD) || defined(CONFIG_MACH_P4NOTE)
+#if defined(CONFIG_MACH_P4NOTE)
 	wac_i2c->wac_pdata->resume_platform_hw();
 	msleep(200);
 #endif
@@ -856,7 +992,6 @@ static int wacom_i2c_probe(struct i2c_client *client,
 #if defined(WACOM_IRQ_WORK_AROUND)
 	INIT_DELAYED_WORK(&wac_i2c->pendct_dwork, wacom_i2c_pendct_work);
 #endif
-
 	/*Request IRQ */
 	if (wac_i2c->irq_flag) {
 		ret =
@@ -885,6 +1020,7 @@ static int wacom_i2c_probe(struct i2c_client *client,
 		}
 #endif
 	}
+
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	wac_i2c->early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN + 1;
 	wac_i2c->early_suspend.suspend = wacom_i2c_early_suspend;
@@ -909,9 +1045,18 @@ static int wacom_i2c_probe(struct i2c_client *client,
 	printk(KERN_NOTICE "[E-PEN] wacom fw ver : 0x%x, new fw ver : 0x%x\n",
 	       wac_i2c->wac_feature->fw_version, Firmware_version_of_file);
 
+#if defined(CONFIG_MACH_P4NOTE)
+	INIT_DELAYED_WORK(&wac_i2c->query_work, query_dwork);
+	schedule_delayed_work(&wac_i2c->query_work, HZ / 5);
+#endif
+
 #ifdef CONFIG_SEC_TOUCHSCREEN_DVFS_LOCK
 	INIT_DELAYED_WORK(&wac_i2c->dvfs_work, free_dvfs_lock);
+#if defined(CONFIG_MACH_P4NOTE)
+	if (exynos_cpufreq_get_level(800000, &wac_i2c->cpufreq_level))
+#else
 	if (exynos_cpufreq_get_level(500000, &wac_i2c->cpufreq_level))
+#endif
 		printk(KERN_ERR "[E-PEN] exynos_cpufreq_get_level Error\n");
 #ifdef SEC_BUS_LOCK
 	wac_i2c->dvfs_lock_status = false;

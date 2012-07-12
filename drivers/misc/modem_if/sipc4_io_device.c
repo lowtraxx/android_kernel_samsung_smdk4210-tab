@@ -1043,6 +1043,8 @@ static long misc_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	struct io_device *iod = (struct io_device *)filp->private_data;
 	struct link_device *ld = get_current_link(iod);
 	char cpinfo_buf[530] = "CP Crash ";
+	unsigned long size;
+	int ret;
 
 	mif_debug("cmd = 0x%x\n", cmd);
 
@@ -1068,8 +1070,8 @@ static long misc_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return iod->mc->ops.modem_boot_off(iod->mc);
 
 	/* TODO - will remove this command after ril updated */
-	case IOCTL_MODEM_START:
-		mif_debug("misc_ioctl : IOCTL_MODEM_START\n");
+	case IOCTL_MODEM_BOOT_DONE:
+		mif_debug("misc_ioctl : IOCTL_MODEM_BOOT_DONE\n");
 		return 0;
 
 	case IOCTL_MODEM_STATUS:
@@ -1136,6 +1138,30 @@ static long misc_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case IOCTL_MODEM_DUMP_RESET:
 		mif_err("misc_ioctl : IOCTL_MODEM_DUMP_RESET\n");
 		return iod->mc->ops.modem_dump_reset(iod->mc);
+
+	case IOCTL_MIF_LOG_DUMP:
+		size = MAX_MIF_BUFF_SIZE;
+		ret = copy_to_user((void __user *)arg, &size,
+			sizeof(unsigned long));
+		if (ret < 0)
+			return -EFAULT;
+
+		mif_dump_log(iod->mc->msd, iod);
+		return 0;
+
+	case IOCTL_MIF_DPRAM_DUMP:
+#ifdef CONFIG_LINK_DEVICE_DPRAM
+		if (iod->mc->mdm_data->link_types & LINKTYPE(LINKDEV_DPRAM)) {
+			size = iod->mc->mdm_data->dpram_ctl->dp_size;
+			ret = copy_to_user((void __user *)arg, &size,
+				sizeof(unsigned long));
+			if (ret < 0)
+				return -EFAULT;
+			mif_dump_dpram(iod);
+			return 0;
+		}
+#endif
+		return -EINVAL;
 
 	default:
 		 /* If you need to handle the ioctl for specific link device,

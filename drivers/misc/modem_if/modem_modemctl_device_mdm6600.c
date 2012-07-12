@@ -258,7 +258,7 @@ int mdm6600_init_modemctl_device(struct modem_ctl *mc, struct modem_data *pdata)
 }
 #endif				/* CONFIG_MACH_U1_KOR_LGT */
 
-#if defined(CONFIG_MACH_C1CTC) || defined(CONFIG_MACH_M0_CTC)
+#if defined(CONFIG_MACH_M0_CTC)
 #include "modem_link_device_dpram.h"
 
 #define PIF_TIMEOUT		(180 * HZ)

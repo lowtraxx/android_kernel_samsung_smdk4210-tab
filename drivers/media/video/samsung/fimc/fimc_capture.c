@@ -1309,7 +1309,7 @@ int fimc_s_fmt_vid_private(struct file *file, void *fh, struct v4l2_format *f)
  */
 		mbus_fmt->field = pix->field;
 #endif
-#if (defined(CONFIG_MACH_S2PLUS) || defined(CONFIG_MACH_GC1))
+#if defined(CONFIG_MACH_GC1)
 		mbus_fmt->field = pix->priv;
 #endif
 		printk(KERN_INFO "%s mbus_fmt->width = %d, height = %d,\n",
@@ -2002,32 +2002,34 @@ int fimc_s_ctrl_capture(void *fh, struct v4l2_control *c)
 	switch (c->id) {
 #ifdef CONFIG_MACH_GC1
 	case V4L2_CID_CAM_UPDATE_FW:
-		if (fimc->mclk_status == CAM_MCLK_ON) {
-			if (ctrl->cam->cam_power)
-				ctrl->cam->cam_power(0);
+		if (c->value == FW_MODE_UPDATE) {
+			if (fimc->mclk_status == CAM_MCLK_ON) {
+				if (ctrl->cam->cam_power)
+					ctrl->cam->cam_power(0);
 
-			/* shutdown the MCLK */
-			clk_disable(ctrl->cam->clk);
-			fimc->mclk_status = CAM_MCLK_OFF;
+				/* shutdown the MCLK */
+				clk_disable(ctrl->cam->clk);
+				fimc->mclk_status = CAM_MCLK_OFF;
 
-			mdelay(5);
-		}
+				mdelay(5);
+			}
 
-		if ((clk_get_rate(ctrl->cam->clk)) && (fimc->mclk_status == CAM_MCLK_OFF)) {
-			clk_set_rate(ctrl->cam->clk, ctrl->cam->clk_rate);
-			clk_enable(ctrl->cam->clk);
-			fimc->mclk_status = CAM_MCLK_ON;
-			fimc_info1("clock for camera: %d\n", ctrl->cam->clk_rate);
+			if ((clk_get_rate(ctrl->cam->clk)) &&
+					(fimc->mclk_status == CAM_MCLK_OFF)) {
+				clk_set_rate(ctrl->cam->clk,
+						ctrl->cam->clk_rate);
+				clk_enable(ctrl->cam->clk);
+				fimc->mclk_status = CAM_MCLK_ON;
+				fimc_info1("clock for camera: %d\n",
+						ctrl->cam->clk_rate);
 
-			if (ctrl->cam->cam_power)
-				ctrl->cam->cam_power(1);
-		}
-
-		if (c->value == FW_MODE_UPDATE)
+				if (ctrl->cam->cam_power)
+					ctrl->cam->cam_power(1);
+			}
 			ret = v4l2_subdev_call(ctrl->cam->sd, core, load_fw);
-
-		else
+		} else {
 			ret = v4l2_subdev_call(ctrl->cam->sd, core, s_ctrl, c);
+		}
 		break;
 #endif
 	case V4L2_CID_CAMERA_RESET:
@@ -2210,6 +2212,12 @@ int fimc_s_ctrl_capture(void *fh, struct v4l2_control *c)
 		dev_unlock(ctrl->bus_dev, ctrl->dev);
 		break;
 #endif
+
+	case V4L2_CID_CAMERA_SET_DUAL_CAPTURE:
+	case V4L2_CID_CAMERA_DUAL_CAPTURE:
+	case V4L2_CID_CAMERA_DUAL_POSTVIEW:
+		ret = v4l2_subdev_call(ctrl->cam->sd, core, s_ctrl, c);
+		break;
 
 	case V4L2_CID_IS_CAMERA_FLASH_MODE:
 	case V4L2_CID_CAMERA_SCENE_MODE:

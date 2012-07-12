@@ -54,7 +54,6 @@ static void mc_state_fsm(struct modem_ctl *mc)
 		}
 	}
 
-exit:
 	if (old_state != new_state) {
 		mc->bootd->modem_state_changed(mc->bootd, new_state);
 		mc->iod->modem_state_changed(mc->iod, new_state);
@@ -207,6 +206,13 @@ static int cmc221_boot_off(struct modem_ctl *mc)
 
 	enable_irq(mc->irq_phone_active);
 
+	return 0;
+}
+
+static int cmc221_boot_done(struct modem_ctl *mc)
+{
+	mif_err("%s\n", mc->bootd->name);
+
 	set_sromc_access(false);
 	wake_unlock(&mc->mc_wake_lock);
 
@@ -220,6 +226,7 @@ static void cmc221_get_ops(struct modem_ctl *mc)
 	mc->ops.modem_reset = cmc221_reset;
 	mc->ops.modem_boot_on = cmc221_boot_on;
 	mc->ops.modem_boot_off = cmc221_boot_off;
+	mc->ops.modem_boot_done = cmc221_boot_done;
 	mc->ops.modem_force_crash_exit = cmc221_force_crash_exit;
 	mc->ops.modem_dump_reset = cmc221_dump_reset;
 }

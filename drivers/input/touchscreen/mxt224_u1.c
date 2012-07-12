@@ -685,7 +685,7 @@ void check_chip_calibration(unsigned char one_touch_input_flag)
 	    get_object_info(copy_data, DEBUG_DIAGNOSTIC_T37, &size,
 			    &object_address);
 
-	mdelay(10);
+	usleep_range(10000, 10000);
 
 	/* read touch flags from the diagnostic object
 	- clear buffer so the while loop can run first time */
@@ -703,7 +703,7 @@ void check_chip_calibration(unsigned char one_touch_input_flag)
 			break;
 		}
 
-		mdelay(2);	/* 0318 hugh  3-> 2 */
+		usleep_range(2000, 2000);	/* 0318 hugh  3-> 2 */
 		try_ctr++;	/* timeout counter */
 		/* read_mem(diag_address, 2,data_buffer); */
 
@@ -2905,7 +2905,7 @@ static ssize_t set_mxt_update_show(struct device *dev,
 		printk(KERN_ERR "[TSP] The firmware update succeeded\n");
 
 		/* Wait for reset */
-		mdelay(QT602240_FWRESET_TIME);
+		msleep(QT602240_FWRESET_TIME);
 		/* initialize the TSP */
 		mxt224_init_touch_driver(data);
 		/*jerry no need of it */

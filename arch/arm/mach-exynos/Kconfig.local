@@ -47,9 +47,21 @@ config MACH_C1_USA_VZW
 endchoice
 
 choice
+	prompt "C2 USA Target Carrier"
+	depends on MACH_C2 && TARGET_LOCALE_USA
+	default MACH_C2_USA_VZW
+
+config MACH_C2_USA_VZW
+	bool "C2 Verizon"
+
+config MACH_C2_USA_SPR
+	bool "C2 Sprint"
+endchoice
+
+choice
 	prompt "T0 Target"
-	depends on MACH_T0 && (TARGET_LOCALE_EUR || TARGET_LOCALE_USA)
-	default MACH_T0_EUR_LTE
+	depends on MACH_T0 && (TARGET_LOCALE_EUR || TARGET_LOCALE_USA || TARGET_LOCALE_KOR)
+	default MACH_T0_EUR_OPEN
 
 config MACH_T0_USA_ATT
 	bool "ATT"
@@ -68,6 +80,18 @@ config MACH_T0_USA_USCC
 
 config MACH_T0_EUR_LTE
 	bool "EUR LTE"
+
+config MACH_T0_EUR_OPEN
+	bool "EUR OPEN"
+
+config MACH_T0_KOR_SKT
+	bool "SKT"
+
+config MACH_T0_KOR_KT
+	bool "KT"
+
+config MACH_T0_KOR_LGT
+	bool "LG U+"
 
 endchoice
 
@@ -133,7 +157,7 @@ endchoice
 
 choice
 	prompt "M0 Chinese Target Carrier"
-	depends on MACH_M0 && TARGET_LOCALE_CHN
+	depends on (MACH_M0 || MACH_GRANDE) && TARGET_LOCALE_CHN
 
 config MACH_M0_CMCC
 	bool "M0 CHN CMCC board"
@@ -156,14 +180,10 @@ config MACH_Q1_CMCC_BD
 	bool "Q1 CHN CMCC board"
 endchoice
 
-
 menu "M0 CTC based models"
 	depends on MACH_M0_CTC && TARGET_LOCALE_CHN
 
 config MACH_M0_GRANDECTC
 	bool "M0 CHN GRANDE CTC board"
-	select EXYNOS4_SETUP_KEYPAD
-	select SAMSUNG_DEV_KEYPAD
 endmenu
-
 

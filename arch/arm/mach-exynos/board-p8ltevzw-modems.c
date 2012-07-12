@@ -435,6 +435,13 @@ static struct modem_io_t cdma_io_devices[] = {
 		.io_type = IODEV_MISC,
 		.link = LINKDEV_DPRAM,
 	},
+		[13] = {
+		.name = "cdma_router", /* AT commands */
+		.id = 0x39,
+		.format = IPC_RAW,
+		.io_type = IODEV_MISC,
+		.link = LINKDEV_DPRAM,
+	},
 };
 
 static struct modem_data cdma_modem_data = {

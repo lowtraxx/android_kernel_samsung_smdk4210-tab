@@ -219,6 +219,11 @@ int usb_wwan_write(struct tty_struct *tty, struct usb_serial_port *port,
 
 	dbg("%s: write (%d chars)", __func__, count);
 
+#ifdef CONFIG_MDM_HSIC_PM
+	if (port->serial->dev->actconfig->desc.bNumInterfaces == 9)
+		pr_info("%s: write (%d chars)", __func__, count);
+#endif
+
 	i = 0;
 	left = count;
 	for (i = 0; left > 0 && i < N_OUT_URB; i++) {
@@ -237,6 +242,8 @@ int usb_wwan_write(struct tty_struct *tty, struct usb_serial_port *port,
 		dbg("%s: endpoint %d buf %d", __func__,
 		    usb_pipeendpoint(this_urb->pipe), i);
 
+		usb_mark_last_busy(
+				interface_to_usbdev(port->serial->interface));
 		err = usb_autopm_get_interface_async(port->serial->interface);
 		if (err < 0)
 			break;
@@ -291,6 +298,7 @@ static void usb_wwan_indat_callback(struct urb *urb)
 	endpoint = usb_pipeendpoint(urb->pipe);
 	port = urb->context;
 
+	usb_mark_last_busy(interface_to_usbdev(port->serial->interface));
 	if (status) {
 		dbg("%s: nonzero status: %d on endpoint %02x.",
 		    __func__, status, endpoint);
@@ -298,6 +306,12 @@ static void usb_wwan_indat_callback(struct urb *urb)
 		tty = tty_port_tty_get(&port->port);
 		if (tty) {
 			if (urb->actual_length) {
+#ifdef CONFIG_MDM_HSIC_PM
+				struct usb_device *udev = port->serial->dev;
+				if (udev->actconfig->desc.bNumInterfaces == 9)
+					pr_info("%s: read urb received : %d\n",
+						__func__, urb->actual_length);
+#endif
 				tty_insert_flip_string(tty, data,
 						urb->actual_length);
 				tty_flip_buffer_push(tty);
@@ -319,6 +333,8 @@ static void usb_wwan_indat_callback(struct urb *urb)
 			} else {
 				usb_mark_last_busy(port->serial->dev);
 			}
+			usb_mark_last_busy(
+				interface_to_usbdev(port->serial->interface));
 		}
 
 	}
@@ -338,6 +354,7 @@ static void usb_wwan_outdat_callback(struct urb *urb)
 
 	usb_serial_port_softint(port);
 	usb_autopm_put_interface_async(port->serial->interface);
+	usb_mark_last_busy(interface_to_usbdev(port->serial->interface));
 	portdata = usb_get_serial_port_data(port);
 	spin_lock(&intfdata->susp_lock);
 	intfdata->in_flight--;
@@ -582,8 +599,7 @@ bail_out_error2:
 		kfree(portdata->out_buffer[j]);
 bail_out_error:
 	for (j = 0; j < N_IN_URB; j++)
-		if (portdata->in_buffer[j])
-			free_page((unsigned long)portdata->in_buffer[j]);
+		kfree(portdata->in_buffer[j]);
 	kfree(portdata);
 	return 1;
 }
@@ -629,8 +645,7 @@ void usb_wwan_release(struct usb_serial *serial)
 
 		for (j = 0; j < N_IN_URB; j++) {
 			usb_free_urb(portdata->in_urbs[j]);
-			free_page((unsigned long)
-				  portdata->in_buffer[j]);
+			kfree(portdata->in_buffer[j]);
 			portdata->in_urbs[j] = NULL;
 		}
 		for (j = 0; j < N_OUT_URB; j++) {
@@ -736,6 +751,10 @@ int usb_wwan_resume(struct usb_serial *serial)
 		}
 	}
 
+	spin_lock_irq(&intfdata->susp_lock);
+	intfdata->suspended = 0;
+	spin_unlock_irq(&intfdata->susp_lock);
+
 	for (i = 0; i < serial->num_ports; i++) {
 		/* walk all ports */
 		port = serial->port[i];
@@ -761,9 +780,6 @@ int usb_wwan_resume(struct usb_serial *serial)
 		play_delayed(port);
 		spin_unlock_irq(&intfdata->susp_lock);
 	}
-	spin_lock_irq(&intfdata->susp_lock);
-	intfdata->suspended = 0;
-	spin_unlock_irq(&intfdata->susp_lock);
 err_out:
 	return err;
 }

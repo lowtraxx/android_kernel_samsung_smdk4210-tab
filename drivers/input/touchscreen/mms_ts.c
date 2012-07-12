@@ -122,6 +122,9 @@ enum {
 #define  TSP_FW_UPDATEABLE_HW_REV  9
 #elif defined(CONFIG_MACH_C1_KOR_LGT)
 #define  TSP_FW_UPDATEABLE_HW_REV  6
+/*FIXME: will be removed, after separate TSP driver for slp*/
+#elif defined(CONFIG_MACH_SLP_PQ)
+#define  TSP_FW_UPDATEABLE_HW_REV  15
 #else
 #define  TSP_FW_UPDATEABLE_HW_REV  11
 #endif
@@ -153,6 +156,10 @@ enum {
 /* Touch booster */
 #if defined(CONFIG_EXYNOS4_CPUFREQ) &&\
 	defined(CONFIG_BUSFREQ_OPP)
+#define TOUCH_BOOSTER			1
+#define TOUCH_BOOSTER_OFF_TIME		100
+#define TOUCH_BOOSTER_CHG_TIME		200
+#elif defined(CONFIG_MACH_SLP_PQ)
 #define TOUCH_BOOSTER			1
 #define TOUCH_BOOSTER_OFF_TIME		100
 #define TOUCH_BOOSTER_CHG_TIME		200
@@ -3223,6 +3230,19 @@ static int __devinit mms_ts_probe(struct i2c_client *client,
 	noise_mode_indicator = 0;
 #endif
 
+#if defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_C1)
+	gpio_request(GPIO_OLED_DET, "OLED_DET");
+	ret = gpio_get_value(GPIO_OLED_DET);
+	printk(KERN_DEBUG
+	"[TSP] OLED_DET = %d\n", ret);
+
+	if (ret == 0) {
+		printk(KERN_DEBUG
+		"[TSP] device wasn't connected to board\n");
+		return -EIO;
+	}
+#endif
+
 	if (!i2c_check_functionality(adapter, I2C_FUNC_I2C))
 		return -EIO;
 
@@ -3348,7 +3368,11 @@ static int __devinit mms_ts_probe(struct i2c_client *client,
 	info->enabled = true;
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
+#if defined(CONFIG_TARGET_LOCALE_KOR)
+		info->early_suspend.level = EARLY_SUSPEND_LEVEL_DISABLE_FB+1;
+#else
 	info->early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN + 1;
+#endif
 	info->early_suspend.suspend = mms_ts_early_suspend;
 	info->early_suspend.resume = mms_ts_late_resume;
 	register_early_suspend(&info->early_suspend);
@@ -3467,12 +3491,8 @@ static int mms_ts_resume(struct device *dev)
 #endif
 	dev_notice(&info->client->dev, "%s: users=%d\n", __func__,
 		   info->input_dev->users);
-// jk45.kim: To up TSP init speed.
-#if !defined(CONFIG_TARGET_LOCALE_KOR)
 	info->pdata->power(1);
 	msleep(120);
-#endif
-// jk45.kim
 
 	if (info->ta_status) {
 		dev_notice(&client->dev, "TA connect!!!\n");

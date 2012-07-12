@@ -267,9 +267,6 @@ struct mipi_dsim_ddi
 				return dsim_ddi;
 			}
 		}
-
-		kfree(dsim_ddi);
-		list_del(&dsim_ddi->list);
 	}
 
 out:
@@ -706,6 +703,7 @@ static int __devexit s5p_mipi_dsi_remove(struct platform_device *pdev)
 			if (dsim_lcd_drv->remove)
 				dsim_lcd_drv->remove(dsim_ddi->dsim_lcd_dev);
 
+			list_del(&dsim_ddi->list);
 			kfree(dsim_ddi);
 		}
 	}

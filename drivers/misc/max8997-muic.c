@@ -35,7 +35,10 @@
 #ifdef CONFIG_USBHUB_USB3803
 #include <linux/usb3803.h>
 #endif
-
+#ifdef CONFIG_EXTCON
+#include <linux/extcon.h>
+#define DEV_NAME	"max8997-muic"
+#endif
 
 /* MAX8997 STATUS1 register */
 #define STATUS1_ADC_SHIFT		0
@@ -167,6 +170,9 @@ struct max8997_muic_info {
 
 	struct input_dev	*input;
 	int			previous_key;
+#ifdef CONFIG_EXTCON
+	struct extcon_dev	*edev;
+#endif
 };
 
 #if 0
@@ -911,8 +917,13 @@ static void max8997_muic_attach_mhl(struct max8997_muic_info *info, u8 chgtyp)
 #endif
 	info->cable_type = CABLE_TYPE_MHL;
 
+#ifdef CONFIG_EXTCON
+	if (info->edev && info->is_mhl_ready)
+		extcon_set_cable_state(info->edev, "MHL", true);
+#else
 	if (mdata->mhl_cb && info->is_mhl_ready)
 		mdata->mhl_cb(MAX8997_MUIC_ATTACHED);
+#endif
 
 	if (chgtyp == CHGTYP_USB) {
 		info->cable_type = CABLE_TYPE_MHL_VB;
@@ -1072,7 +1083,7 @@ static int max8997_muic_handle_attach(struct max8997_muic_info *info,
 
 	switch (adc) {
 	case ADC_GND:
-#if defined(CONFIG_MACH_U1)
+#if defined(CONFIG_MACH_U1) || defined(CONFIG_MACH_TRATS)
 		/* This is for support old MUIC */
 		if (adclow) {
 			max8997_muic_attach_mhl(info, chgtyp);
@@ -1103,7 +1114,7 @@ static int max8997_muic_handle_attach(struct max8997_muic_info *info,
 		}
 		break;
 	case ADC_MHL:
-#if defined(CONFIG_MACH_U1)
+#if defined(CONFIG_MACH_U1) || defined(CONFIG_MACH_TRATS)
 		/* This is for support old MUIC */
 		max8997_muic_attach_mhl(info, chgtyp);
 #endif
@@ -1302,6 +1313,10 @@ static int max8997_muic_handle_detach(struct max8997_muic_info *info)
 	case CABLE_TYPE_MHL:
 		dev_info(info->dev, "%s: MHL\n", __func__);
 		info->cable_type = CABLE_TYPE_NONE;
+#ifdef CONFIG_EXTCON
+		if (info->edev && info->is_mhl_ready)
+			extcon_set_cable_state(info->edev, "MHL", false);
+#endif
 		break;
 	case CABLE_TYPE_MHL_VB:
 		dev_info(info->dev, "%s: MHL VBUS\n", __func__);
@@ -1357,7 +1372,7 @@ static void max8997_muic_detect_dev(struct max8997_muic_info *info, int irq)
 
 	switch (adc) {
 	case ADC_MHL:
-#if defined(CONFIG_MACH_U1)
+#if defined(CONFIG_MACH_U1) || defined(CONFIG_MACH_TRATS)
 		break;
 #endif
 	case (ADC_MHL + 1):
@@ -1544,7 +1559,7 @@ static void max8997_muic_mhl_detect(struct work_struct *work)
 
 	mutex_lock(&info->mutex);
 	info->is_mhl_ready = true;
-#ifndef CONFIG_MACH_U1
+#if !defined(CONFIG_MACH_U1) && !defined(CONFIG_MACH_TRATS)
 	if (mdata->is_mhl_attached) {
 		if (!mdata->is_mhl_attached())
 			goto out;
@@ -1552,8 +1567,13 @@ static void max8997_muic_mhl_detect(struct work_struct *work)
 #endif
 	if (info->cable_type == CABLE_TYPE_MHL || \
 		info->cable_type == CABLE_TYPE_MHL_VB) {
+#ifdef CONFIG_EXTCON
+		if (info->edev)
+			extcon_set_cable_state(info->edev, "MHL", true);
+#else
 		if (mdata->mhl_cb)
 			mdata->mhl_cb(MAX8997_MUIC_ATTACHED);
+#endif
 	}
 out:
 	mutex_unlock(&info->mutex);
@@ -1654,6 +1674,24 @@ static int __devinit max8997_muic_probe(struct platform_device *pdev)
 			"failed to create max8997 muic attribute group\n");
 		goto fail;
 	}
+
+#ifdef CONFIG_EXTCON
+	/* External connector */
+	info->edev = kzalloc(sizeof(struct extcon_dev), GFP_KERNEL);
+	if (!info->edev) {
+		pr_err("Failed to allocate memory for extcon device\n");
+		ret = -ENOMEM;
+		goto fail;
+	}
+	info->edev->name = DEV_NAME;
+	info->edev->supported_cable = extcon_cable_name;
+	ret = extcon_dev_register(info->edev, NULL);
+	if (ret) {
+		pr_err("Failed to register extcon device\n");
+		kfree(info->edev);
+		goto fail;
+	}
+#endif
 
 	if (info->muic_data && info->muic_data->init_cb)
 		info->muic_data->init_cb();

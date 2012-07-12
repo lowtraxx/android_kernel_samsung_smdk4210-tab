@@ -46,7 +46,13 @@ static unsigned int ar6k_clock = 26000000;
 #else
 static unsigned int ar6k_clock = 19200000;
 #endif
+
+#ifdef CONFIG_TARGET_LOCALE_P2TMO_TEMP
+static unsigned short reg_domain = 0x8348;
+#else
 static unsigned short reg_domain = 0xffff;
+#endif
+
 static unsigned short lrssi = 10;
 
 static unsigned short en_ani = 1;
@@ -481,7 +487,7 @@ static int ath6kl_target_config_wlan_params(struct ath6kl *ar, int idx)
 {
 	int status = 0;
 	int ret;
-#if CONFIG_MACH_PX
+#ifdef CONFIG_MACH_PX
 	struct ath6kl_vif *vif = ath6kl_get_vif_by_index(ar, idx);
 #endif
 	/*
@@ -496,7 +502,7 @@ static int ath6kl_target_config_wlan_params(struct ath6kl *ar, int idx)
 	}
 
 
-#if CONFIG_MACH_PX
+#ifdef CONFIG_MACH_PX
 	if (ar->conf_flags & ATH6KL_CONF_IGNORE_PS_FAIL_EVT_IN_SCAN) {
 		if ((ath6kl_wmi_pmparams_cmd(ar->wmi, idx,
 			0, vif->pspoll_num, 0, 0, 1,

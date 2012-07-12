@@ -492,12 +492,18 @@ static ssize_t lmk_state_store(struct device *dev,
 			    (__task_cred(p)->uid > 10000)) {
 				task_lock(p);
 				selected = p;
+				if (!selected->mm || !selected->signal) {
+					task_unlock(p);
+					selected = NULL;
+					pr_info("idletime compcache: process is being killed\n");
+					break;
+				}
+				else {
 #if SWAP_PROCESS_DEBUG_LOG > 0
-				printk
-				    ("idletime compcache: swap process pid %d, name %s, oom %d, task_size %ld\n",
-				     p->pid, p->comm, p->signal->oom_adj,
-				     get_mm_rss(p->mm));
+					pr_info("idletime compcache: swap process pid %d, name %s, task_size %ld\n",
+						p->pid, p->comm, get_mm_rss(p->mm));
 #endif
+				}
 				break;
 			}
 		}

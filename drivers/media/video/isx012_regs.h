@@ -4051,6 +4051,7 @@ static const isx012_regset_t ISX012_Camcorder_Mode_OFF[] = {
 static const isx012_regset_t ISX012_Halfrelease_Mode[] =
 {
 {0x6674,0x01,0x01},    // AF_MONICHG_MOVE_F
+{0xFFFF,0x0A,0x01},//$wait, 10
 {0x00B2,0x03,0x01},    //AFMODE_MONI : AF OFF
 {0x00B3,0x00,0x01},    //AFMODE_HREL :
 {0xFFFF,0x21,0x01},//$wait, 33
@@ -4079,6 +4080,7 @@ static const isx012_regset_t ISX012_Lowlux_night_Halfrelease_Mode[] =
 
 static const isx012_regset_t ISX012_AF_Cancel_Macro_ON[] =
 {
+{0x6674,0x00,0x01},    // AF_MONICHG_MOVE_F
 {0x00B2,0x02,0x01},    //AFMODE_MONI : Manual AF mode
 {0x0081,0x00,0x01},    //MODESEL : Monitoring mode
 {0x6648,0x02BC,0x02},    //AF_MANUAL_POS : MANUA AF search start position
@@ -4087,6 +4089,7 @@ static const isx012_regset_t ISX012_AF_Cancel_Macro_ON[] =
 
 static const isx012_regset_t ISX012_AF_Cancel_Macro_OFF[] =
 {
+{0x6674,0x00,0x01},    // AF_MONICHG_MOVE_F
 {0x00B2,0x02,0x01},    //AFMODE_MONI : Manual AF mode
 {0x0081,0x00,0x01},    //MODESEL : Monitoring mode
 {0x6648,0x00C8,0x02},    //AF_MANUAL_POS : MANUA AF search start position
@@ -4132,7 +4135,9 @@ static const isx012_regset_t ISX012_AF_SAF[] =
 
 static const isx012_regset_t ISX012_AF_SAF_OFF[] =
 {
+{0xFFFF,0x42,0x01},//$wait, 66
 {0x6674,0x00,0x01},    // AF_MONICHG_MOVE_F
+{0xFFFF,0x0A,0x01},//$wait, 10
 {0x00B2,0x03,0x01},    //AFMODE_MONI : AF OFF
 {0x00B3,0x03,0x01},    //AFMODE_HREL : AF OFF
 {0xFFFF,0x21,0x01},    //$wait,33
@@ -4140,7 +4145,9 @@ static const isx012_regset_t ISX012_AF_SAF_OFF[] =
 
 static const isx012_regset_t ISX012_AF_TouchSAF_OFF[] =
 {
+{0xFFFF,0x42,0x01},//$wait, 66
 {0x6674,0x00,0x01},    // AF_MONICHG_MOVE_F
+{0xFFFF,0x0A,0x01},//$wait, 10
 {0x00B2,0x03,0x01},    //AFMODE_MONI : AF OFF
 {0x00B3,0x03,0x01},    //AFMODE_HREL : AF OFF
 {0xFFFF,0x21,0x01},    //$wait,33
@@ -4258,7 +4265,8 @@ static const isx012_regset_t isx012_Contrast_Plus_2[] =
 
 static const isx012_regset_t isx012_Effect_Sketch[] =
 {
-{0x01C5,0x05,0x01}, /* FMODE */
+{0x01C5,0x06,0x01}, /* FMODE */
+{0x6C5F,0x04,0x01}, /* SKETCH_APGAIN */
 };
 
 static const isx012_regset_t isx012_Effect_Pastel[] =
@@ -4423,7 +4431,6 @@ static const isx012_regset_t ISX012_Capture_Mode[] =
 {0x0012,0xFF,0x01},    //INTCLR0
 {0x0081,0x02,0x01},    //MODESEL
 {0x0082,0x01,0x01},    //MONI_REFRESH
-{0xFFFF,0x42,0x01},    //$wait,66
 };
 
 static const isx012_regset_t ISX012_Lowlux_Night_Capture_Mode[] =
@@ -4439,7 +4446,6 @@ static const isx012_regset_t ISX012_Lowlux_Night_Capture_Mode[] =
 {0x0012,0xFF,0x01},    //INTCLR0
 {0x0081,0x02,0x01},    //MODESEL
 {0x0082,0x01,0x01},    //MONI_REFRESH
-{0xFFFF,0x03E8,0x01},    //$wait,1s
 };
 
 static const isx012_regset_t isx012_Saturation_Default[] =

@@ -435,6 +435,8 @@ void exynos_drm_gem_destroy(struct exynos_drm_gem_obj *exynos_gem_obj)
 	if (!buf->pages)
 		return;
 
+	exynos_drm_iommu_unmap_gem(obj);
+
 	if (exynos_gem_obj->flags & EXYNOS_BO_NONCONTIG)
 		exynos_drm_gem_put_pages(obj);
 	else if (exynos_gem_obj->flags & EXYNOS_BO_USERPTR)
@@ -474,6 +476,27 @@ struct exynos_drm_gem_obj *exynos_drm_gem_get_obj(struct drm_device *dev,
 
 	return exynos_gem_obj;
 }
+
+unsigned long exynos_drm_gem_get_size(struct drm_device *dev,
+						unsigned int gem_handle,
+						struct drm_file *file_priv)
+{
+	struct exynos_drm_gem_obj *exynos_gem_obj;
+	struct drm_gem_object *obj;
+
+	obj = drm_gem_object_lookup(dev, file_priv, gem_handle);
+	if (!obj) {
+		DRM_ERROR("failed to lookup gem object.\n");
+		return 0;
+	}
+
+	exynos_gem_obj = to_exynos_gem_obj(obj);
+
+	drm_gem_object_unreference_unlocked(obj);
+
+	return exynos_gem_obj->buffer->size;
+}
+
 
 struct exynos_drm_gem_obj *exynos_drm_gem_init(struct drm_device *dev,
 						      unsigned long size)
@@ -567,7 +590,9 @@ int exynos_drm_gem_create_ioctl(struct drm_device *dev, void *data,
 				struct drm_file *file_priv)
 {
 	struct drm_exynos_gem_create *args = data;
+	struct exynos_drm_private *private;
 	struct exynos_drm_gem_obj *exynos_gem_obj;
+	struct exynos_drm_gem_buf *buf;
 	int ret;
 
 	DRM_DEBUG_KMS("%s\n", __FILE__);
@@ -583,63 +608,66 @@ int exynos_drm_gem_create_ioctl(struct drm_device *dev, void *data,
 		return ret;
 	}
 
-	return 0;
+	private = dev->dev_private;
+	buf = exynos_gem_obj->buffer;
+	exynos_gem_obj->vmm = private->vmm;
+
+	buf->dev_addr = exynos_drm_iommu_map_gem(dev, file_priv,
+							&exynos_gem_obj->base);
+	if (!buf->dev_addr) {
+		DRM_ERROR("failed to map gem buffer with iommu table.\n");
+		exynos_drm_gem_destroy(exynos_gem_obj);
+		drm_gem_handle_delete(file_priv, args->handle);
+		ret = -EFAULT;
+	}
+
+	return ret;
 }
 
 void *exynos_drm_gem_get_dma_addr(struct drm_device *dev,
 					unsigned int gem_handle,
-					struct drm_file *file_priv)
+					struct drm_file *filp,
+					unsigned int *gem_obj)
 {
 	struct exynos_drm_gem_obj *exynos_gem_obj;
+	struct exynos_drm_gem_buf *buf;
 	struct drm_gem_object *obj;
 
-	obj = drm_gem_object_lookup(dev, file_priv, gem_handle);
+	obj = drm_gem_object_lookup(dev, filp, gem_handle);
 	if (!obj) {
 		DRM_ERROR("failed to lookup gem object.\n");
 		return ERR_PTR(-EINVAL);
 	}
 
 	exynos_gem_obj = to_exynos_gem_obj(obj);
+	buf = exynos_gem_obj->buffer;
 
-	if (exynos_gem_obj->flags & EXYNOS_BO_NONCONTIG) {
-		DRM_DEBUG_KMS("not support NONCONTIG type.\n");
-		drm_gem_object_unreference_unlocked(obj);
+	*gem_obj = (unsigned int)obj;
 
-		/* TODO */
-		return ERR_PTR(-EINVAL);
-	}
+	/* means this gem was mapped with iommu table. FIXME */
+	if (exynos_gem_obj->vmm && buf->dev_addr)
+		return &buf->dev_addr;
 
-	return &exynos_gem_obj->buffer->dma_addr;
+	return &buf->dma_addr;
 }
 
-void exynos_drm_gem_put_dma_addr(struct drm_device *dev,
-					unsigned int gem_handle,
-					struct drm_file *file_priv)
+void exynos_drm_gem_put_dma_addr(struct drm_device *dev, void *gem_obj)
 {
 	struct exynos_drm_gem_obj *exynos_gem_obj;
 	struct drm_gem_object *obj;
 
-	obj = drm_gem_object_lookup(dev, file_priv, gem_handle);
-	if (!obj) {
-		DRM_ERROR("failed to lookup gem object.\n");
+	if (!gem_obj)
 		return;
-	}
+
+	/* use gem handle instead of object. TODO */
+
+	obj = gem_obj;
 
 	exynos_gem_obj = to_exynos_gem_obj(obj);
 
-	if (exynos_gem_obj->flags & EXYNOS_BO_NONCONTIG) {
-		DRM_DEBUG_KMS("not support NONCONTIG type.\n");
-		drm_gem_object_unreference_unlocked(obj);
-
-		/* TODO */
-		return;
-	}
-
-	drm_gem_object_unreference_unlocked(obj);
-
 	/*
-	 * decrease obj->refcount one more time because we has already
-	 * increased it at exynos_drm_gem_get_dma_addr().
+	 * unreference this gem object because this had already been
+	 * referenced at exynos_drm_gem_get_dma_addr().
 	 */
 	drm_gem_object_unreference_unlocked(obj);
 }
@@ -1114,13 +1142,16 @@ static int exynos_gem_l1_cache_ops(struct drm_device *drm_dev,
 }
 
 static int exynos_gem_l2_cache_ops(struct drm_device *drm_dev,
-					struct drm_exynos_gem_cache_op *op) {
-	phys_addr_t phy_start, phy_end;
-
+				struct drm_file *filp,
+				struct drm_exynos_gem_cache_op *op)
+{
 	if (op->flags & EXYNOS_DRM_CACHE_FSH_RANGE ||
 			op->flags & EXYNOS_DRM_CACHE_INV_RANGE ||
 			op->flags & EXYNOS_DRM_CACHE_CLN_RANGE) {
+		unsigned long virt_start = op->usr_addr, pfn;
+		phys_addr_t phy_start, phy_end;
 		struct vm_area_struct *vma;
+		int ret;
 
 		down_read(&current->mm->mmap_sem);
 		vma = find_vma(current->mm, op->usr_addr);
@@ -1132,43 +1163,89 @@ static int exynos_gem_l2_cache_ops(struct drm_device *drm_dev,
 		}
 
 		/*
-		 * for range flush to l2 cache, mmaped memory region should
-		 * be physically continuous because l2 cache uses PIPT.
+		 * Range operation to l2 cache(PIPT)
 		 */
 		if (vma && (vma->vm_flags & VM_PFNMAP)) {
-			unsigned long virt_start = op->usr_addr, pfn;
-			int ret;
-
 			ret = follow_pfn(vma, virt_start, &pfn);
 			if (ret < 0) {
-				DRM_ERROR("failed to get pfn from usr_addr.\n");
+				DRM_ERROR("failed to get pfn.\n");
 				return ret;
 			}
 
+			/*
+			 * the memory region with VM_PFNMAP is contiguous
+			 * physically so do range operagion just one time.
+			 */
 			phy_start = pfn << PAGE_SHIFT;
 			phy_end = phy_start + op->size;
+
+			if (op->flags & EXYNOS_DRM_CACHE_FSH_RANGE)
+				outer_flush_range(phy_start, phy_end);
+			else if (op->flags & EXYNOS_DRM_CACHE_INV_RANGE)
+				outer_inv_range(phy_start, phy_end);
+			else if (op->flags & EXYNOS_DRM_CACHE_CLN_RANGE)
+				outer_clean_range(phy_start, phy_end);
+
+			return 0;
 		} else {
-			DRM_ERROR("not mmaped memory region with PFNMAP.\n");
-			return -EINVAL;
+			struct exynos_drm_gem_obj *exynos_obj;
+			struct exynos_drm_gem_buf *buf;
+			struct drm_gem_object *obj;
+			struct scatterlist *sgl;
+			unsigned int npages, i = 0;
+
+			mutex_lock(&drm_dev->struct_mutex);
+
+			obj = drm_gem_object_lookup(drm_dev, filp,
+							op->gem_handle);
+			if (!obj) {
+				DRM_ERROR("failed to lookup gem object.\n");
+				mutex_unlock(&drm_dev->struct_mutex);
+				return -EINVAL;
+			}
+
+			exynos_obj = to_exynos_gem_obj(obj);
+			buf = exynos_obj->buffer;
+			npages = buf->size >> PAGE_SHIFT;
+			sgl = buf->sgt->sgl;
+
+			drm_gem_object_unreference(obj);
+			mutex_unlock(&drm_dev->struct_mutex);
+
+			/*
+			 * in this case, the memory region is non-contiguous
+			 * physically  so do range operation to all the pages.
+			 */
+			while (i < npages) {
+				phy_start = sg_dma_address(sgl);
+				phy_end = phy_start + buf->page_size;
+
+				if (op->flags & EXYNOS_DRM_CACHE_FSH_RANGE)
+					outer_flush_range(phy_start, phy_end);
+				else if (op->flags & EXYNOS_DRM_CACHE_INV_RANGE)
+					outer_inv_range(phy_start, phy_end);
+				else if (op->flags & EXYNOS_DRM_CACHE_CLN_RANGE)
+					outer_clean_range(phy_start, phy_end);
+
+				i++;
+				sgl = sg_next(sgl);
+			}
+
+			return 0;
 		}
 	}
 
 	if (op->flags & EXYNOS_DRM_CACHE_FSH_ALL)
 		outer_flush_all();
-	else if (op->flags & EXYNOS_DRM_CACHE_FSH_RANGE)
-		outer_flush_range(phy_start, phy_end);
 	else if (op->flags & EXYNOS_DRM_CACHE_INV_ALL)
 		outer_inv_all();
 	else if (op->flags & EXYNOS_DRM_CACHE_CLN_ALL)
 		outer_clean_all();
-	else if (op->flags & EXYNOS_DRM_CACHE_INV_RANGE)
-		outer_inv_range(phy_start, phy_end);
-	else if (op->flags & EXYNOS_DRM_CACHE_CLN_RANGE)
-		outer_clean_range(phy_start, phy_end);
 	else {
 		DRM_ERROR("invalid l2 cache operation.\n");
 		return -EINVAL;
 	}
+
 
 	return 0;
 }
@@ -1185,6 +1262,33 @@ int exynos_drm_gem_cache_op_ioctl(struct drm_device *drm_dev, void *data,
 	if (ret)
 		return -EINVAL;
 
+	/*
+	 * do cache operation for all cache range if op->size is bigger
+	 * than SZ_1M because cache range operation with bit size has
+	 * big cost.
+	 */
+	if (op->size >= SZ_1M) {
+		if (op->flags & EXYNOS_DRM_CACHE_FSH_RANGE) {
+			if (op->flags & EXYNOS_DRM_L1_CACHE)
+				__cpuc_flush_user_all();
+
+			if (op->flags & EXYNOS_DRM_L2_CACHE)
+				outer_flush_all();
+
+			return 0;
+		} else if (op->flags & EXYNOS_DRM_CACHE_INV_RANGE) {
+			if (op->flags & EXYNOS_DRM_L2_CACHE)
+				outer_inv_all();
+
+			return 0;
+		} else if (op->flags & EXYNOS_DRM_CACHE_CLN_RANGE) {
+			if (op->flags & EXYNOS_DRM_L2_CACHE)
+				outer_clean_all();
+
+			return 0;
+		}
+	}
+
 	if (op->flags & EXYNOS_DRM_L1_CACHE ||
 			op->flags & EXYNOS_DRM_ALL_CACHES) {
 		ret = exynos_gem_l1_cache_ops(drm_dev, op);
@@ -1194,7 +1298,7 @@ int exynos_drm_gem_cache_op_ioctl(struct drm_device *drm_dev, void *data,
 
 	if (op->flags & EXYNOS_DRM_L2_CACHE ||
 			op->flags & EXYNOS_DRM_ALL_CACHES)
-		ret = exynos_gem_l2_cache_ops(drm_dev, op);
+		ret = exynos_gem_l2_cache_ops(drm_dev, file_priv, op);
 err:
 	return ret;
 }
@@ -1316,6 +1420,8 @@ int exynos_drm_gem_dumb_create(struct drm_file *file_priv,
 			       struct drm_mode_create_dumb *args)
 {
 	struct exynos_drm_gem_obj *exynos_gem_obj;
+	struct exynos_drm_private *private;
+	struct exynos_drm_gem_buf *buf;
 	int ret;
 
 	DRM_DEBUG_KMS("%s\n", __FILE__);
@@ -1340,6 +1446,19 @@ int exynos_drm_gem_dumb_create(struct drm_file *file_priv,
 		return ret;
 	}
 
+	private = dev->dev_private;
+	buf = exynos_gem_obj->buffer;
+	exynos_gem_obj->vmm = private->vmm;
+
+	buf->dev_addr = exynos_drm_iommu_map_gem(dev, file_priv,
+						&exynos_gem_obj->base);
+	if (!buf->dev_addr) {
+		DRM_ERROR("failed to map gem buffer with iommu table.\n");
+		exynos_drm_gem_destroy(exynos_gem_obj);
+		drm_gem_handle_delete(file_priv, args->handle);
+		ret = -EFAULT;
+	}
+
 	return 0;
 }
 
@@ -1347,7 +1466,6 @@ int exynos_drm_gem_dumb_map_offset(struct drm_file *file_priv,
 				   struct drm_device *dev, uint32_t handle,
 				   uint64_t *offset)
 {
-	struct exynos_drm_gem_obj *exynos_gem_obj;
 	struct drm_gem_object *obj;
 	int ret = 0;
 
@@ -1368,15 +1486,13 @@ int exynos_drm_gem_dumb_map_offset(struct drm_file *file_priv,
 		goto unlock;
 	}
 
-	exynos_gem_obj = to_exynos_gem_obj(obj);
-
-	if (!exynos_gem_obj->base.map_list.map) {
-		ret = drm_gem_create_mmap_offset(&exynos_gem_obj->base);
+	if (!obj->map_list.map) {
+		ret = drm_gem_create_mmap_offset(obj);
 		if (ret)
 			goto out;
 	}
 
-	*offset = (u64)exynos_gem_obj->base.map_list.hash.key << PAGE_SHIFT;
+	*offset = (u64)obj->map_list.hash.key << PAGE_SHIFT;
 	DRM_DEBUG_KMS("offset = 0x%lx\n", (unsigned long)*offset);
 
 out:

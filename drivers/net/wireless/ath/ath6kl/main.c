@@ -343,6 +343,7 @@ out:
 #ifdef CONFIG_MACH_PX
 void ath6kl_print_ar6k_registers(struct ath6kl *ar)
 {
+#if 0
 	u32 reg_addr;
 	u32 epc_addr1, epc_addr2, epc_addr3, epc_addr4;
 	u32 epc1, epc2, epc3, epc4;
@@ -417,7 +418,7 @@ void ath6kl_print_ar6k_registers(struct ath6kl *ar)
 	else
 		ath6kl_dbg(ATH6KL_DBG_TRC,
 			"ath6kl:reg_dump system sleep: %x\n", ssleep);
-
+#endif
 }
 #endif
 
@@ -1269,6 +1270,8 @@ static void ath6kl_set_multicast_list(struct net_device *ndev)
 
 			if (memcmp(ha->addr, "\x33\x33\x00\x00\x00\x01", ETH_ALEN) == 0) {
 				ath6kl_warn("Skipped : %s\n", sec_conv_mac(ha->addr));
+				kfree(mc_filter);
+				continue;
 			} else {
 				memcpy(mc_filter->hw_addr, ha->addr,
 				       ATH6KL_MCAST_FILTER_MAC_ADDR_SIZE);

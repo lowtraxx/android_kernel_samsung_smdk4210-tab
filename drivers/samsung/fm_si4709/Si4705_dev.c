@@ -152,10 +152,6 @@ unsigned int Si4709_dev_sw;
 static const u16 rx_vol[] = {
 0x0, 0x15, 0x18, 0x1B, 0x1E, 0x21, 0x24, 0x27,
 0x2A, 0x2D, 0x30, 0x33, 0x36, 0x39, 0x3C, 0x3F};
-#elif defined(CONFIG_MACH_M0_KOR_SKT)
-static const u16 rx_vol[] = {
-0x0, 0x13, 0x16, 0x19, 0x1C, 0x1F, 0x23, 0x26,
-0x29, 0x2C, 0x2F, 0x32, 0x36, 0x39, 0x3C, 0x3F};
 #else
 static const u16 rx_vol[] = {
 0x0, 0x13, 0x16, 0x19, 0x1C, 0x1F, 0x22, 0x25,
@@ -1692,9 +1688,6 @@ static int seek(u32 *frequency, int up, int mode)
 		Si4709_dev_wait_flag = SEEK_WAITING;
 		fmSeekStart(up, mode); /* mode 0 is full scan */
 		wait();
-		do {
-			get_int = getIntStatus();
-		} while (!(get_int & STCINT));
 
 		if (Si4709_dev_wait_flag == SEEK_CANCEL) {
 			fmTuneStatus(1, 0);
@@ -1707,9 +1700,19 @@ static int seek(u32 *frequency, int up, int mode)
 				*frequency = Freq;
 
 			*frequency = 0;
+
+			Si4709_dev_wait_flag = NO_WAIT;
+
+			return ret;
 		}
 
 		Si4709_dev_wait_flag = NO_WAIT;
+
+		if (!(getIntStatus() & STCINT)) {
+			printk(KERN_INFO "%s seek is failed!\n", __func__);
+			fmTuneStatus(1, 0);
+			return -1;
+		}
 
 		fmTuneStatus(0, 1);
 		if (BLTF != 1)

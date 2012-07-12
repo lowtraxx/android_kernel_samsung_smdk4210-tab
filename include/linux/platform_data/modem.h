@@ -25,6 +25,7 @@ enum modem_t {
 	QC_MDM6600,
 	QC_ESC6270,
 	DUMMY,
+	MAX_MODEM_TYPE
 };
 
 enum dev_format {
@@ -117,10 +118,10 @@ struct modemlink_pm_data {
 	void *hub_pm_data;
 	bool has_usbhub;
 
-	/* frequency lock */
+	/* cpu/bus frequency lock */
 	atomic_t freqlock;
-	int (*cpufreq_lock)(void);
-	int (*cpufreq_unlock)(void);
+	int (*freq_lock)(struct device *dev);
+	int (*freq_unlock)(struct device *dev);
 
 	int autosuspend_delay_ms; /* if zero, the default value is used */
 };
@@ -204,21 +205,10 @@ struct modemlink_dpram_control {
 	int max_ipc_dev;
 	struct dpram_ipc_map *ipc_map;
 
-	void (*log_disp)(struct modemlink_dpram_control *dpctl);
-	int (*cpupload_step1)(struct modemlink_dpram_control *dpctl);
-	int (*cpupload_step2)(void *arg, struct modemlink_dpram_control *dpctl);
-	int (*cpimage_load_prepare)(struct modemlink_dpram_control *dpctl);
-	int (*cpimage_load)(void *arg, struct modemlink_dpram_control *dpctl);
-	int (*nvdata_load)(void *arg, struct modemlink_dpram_control *dpctl);
-	int (*phone_boot_start)(struct modemlink_dpram_control *dpctl);
-	int (*phone_boot_start_post_process)(void);
-	void (*phone_boot_start_handler)(struct modemlink_dpram_control *dpctl);
-	void (*dload_cmd_hdlr)(struct modemlink_dpram_control *dpctl, u16 cmd);
-	void (*bt_map_init)(struct modemlink_dpram_control *dpctl);
-	void (*load_init)(struct modemlink_dpram_control *dpctl);
-#if defined(CONFIG_MACH_M0_CTC)
-	void (*terminate_link)(struct modemlink_dpram_control *dpctl);
-#endif
+	unsigned boot_size_offset;
+	unsigned boot_tag_offset;
+	unsigned boot_count_offset;
+	unsigned max_boot_frame_size;
 };
 
 /* platform data */

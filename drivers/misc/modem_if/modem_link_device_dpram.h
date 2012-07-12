@@ -204,6 +204,13 @@ struct dpram_boot_map {
 	u32          size;
 };
 
+struct qc_dpram_boot_map {
+	u8 __iomem *buff;
+	u16 __iomem *frame_size;
+	u16 __iomem *tag;
+	u16 __iomem *count;
+};
+
 struct dpram_dload_map {
 	u32 __iomem *magic;
 	u8  __iomem *buff;
@@ -229,11 +236,27 @@ struct ul_header {
 	u16 len;
 } __packed;
 
-#define DP_BOOT_REQ_OFFSET	0
+struct dpram_udl_param {
+	unsigned char *addr;
+	unsigned int size;
+	unsigned int count;
+	unsigned int tag;
+};
+
+struct dpram_udl_check {
+	unsigned int total_size;
+	unsigned int rest_size;
+	unsigned int send_size;
+	unsigned int copy_start;
+	unsigned int copy_complete;
+	unsigned int boot_complete;
+};
+
 #define DP_BOOT_BUFF_OFFSET	4
-#define DP_BOOT_RESP_OFFSET	8
 #define DP_DLOAD_BUFF_OFFSET	4
 #define DP_ULOAD_BUFF_OFFSET	4
+#define DP_BOOT_REQ_OFFSET	0
+#define DP_BOOT_RESP_OFFSET	8
 
 #define MAX_WQ_NAME_LENGTH	64
 
@@ -319,6 +342,8 @@ struct dpram_irq_log_buff {
 
 #define DP_MAX_NAME_LEN	32
 
+struct dpram_ext_op;
+
 struct dpram_link_device {
 	struct link_device ld;
 
@@ -330,6 +355,9 @@ struct dpram_link_device {
 	u32 dp_size;			/* DPRAM size			*/
 	enum dpram_type dp_type;	/* DPRAM type			*/
 
+	/* DPRAM IRQ GPIO# */
+	unsigned gpio_dpram_int;
+
 	/* DPRAM IRQ from CP */
 	int irq;
 	unsigned long irq_flags;
@@ -340,7 +368,11 @@ struct dpram_link_device {
 	struct modemlink_dpram_control *dpctl;
 
 	/* Physical configuration -> logical configuration */
-	struct dpram_boot_map bt_map;
+	union {
+		struct dpram_boot_map bt_map;
+		struct qc_dpram_boot_map qc_bt_map;
+	};
+
 	struct dpram_dload_map dl_map;
 	struct dpram_uload_map ul_map;
 
@@ -359,12 +391,17 @@ struct dpram_link_device {
 	char wlock_name[DP_MAX_NAME_LEN];
 
 	/* For booting */
+	unsigned boot_start_complete;
 	struct completion dpram_init_cmd;
 	struct completion modem_pif_init_done;
 
 	/* For UDL */
+	struct tasklet_struct ul_tsk;
+	struct tasklet_struct dl_tsk;
 	struct completion udl_start_complete;
 	struct completion udl_cmd_complete;
+	struct dpram_udl_check udl_check;
+	struct dpram_udl_param udl_param;
 
 	/* For CP RAM dump */
 	struct completion crash_start_complete;
@@ -374,7 +411,7 @@ struct dpram_link_device {
 	int dump_rcvd;		/* Count of dump packets received */
 
 	/* For locking Tx process */
-	spinlock_t tx_lock;
+	spinlock_t tx_lock[MAX_IPC_DEV];
 
 	/* For efficient RX process */
 	struct tasklet_struct rx_tsk;
@@ -397,10 +434,67 @@ struct dpram_link_device {
 
 	/* for dpram dump */
 	void (*dpram_dump)(struct link_device *ld, char *buff);
+
+	/* Common operations for each DPRAM */
+	void (*clear_intr)(struct dpram_link_device *dpld);
+	u16 (*recv_intr)(struct dpram_link_device *dpld);
+	void (*send_intr)(struct dpram_link_device *dpld, u16 mask);
+	u16 (*get_magic)(struct dpram_link_device *dpld);
+	void (*set_magic)(struct dpram_link_device *dpld, u16 value);
+	u16 (*get_access)(struct dpram_link_device *dpld);
+	void (*set_access)(struct dpram_link_device *dpld, u16 value);
+	u32 (*get_tx_head)(struct dpram_link_device *dpld, int id);
+	u32 (*get_tx_tail)(struct dpram_link_device *dpld, int id);
+	void (*set_tx_head)(struct dpram_link_device *dpld, int id, u32 head);
+	void (*set_tx_tail)(struct dpram_link_device *dpld, int id, u32 tail);
+	u8 *(*get_tx_buff)(struct dpram_link_device *dpld, int id);
+	u32 (*get_tx_buff_size)(struct dpram_link_device *dpld, int id);
+	u32 (*get_rx_head)(struct dpram_link_device *dpld, int id);
+	u32 (*get_rx_tail)(struct dpram_link_device *dpld, int id);
+	void (*set_rx_head)(struct dpram_link_device *dpld, int id, u32 head);
+	void (*set_rx_tail)(struct dpram_link_device *dpld, int id, u32 tail);
+	u8 *(*get_rx_buff)(struct dpram_link_device *dpld, int id);
+	u32 (*get_rx_buff_size)(struct dpram_link_device *dpld, int id);
+	u16 (*get_mask_req_ack)(struct dpram_link_device *dpld, int id);
+	u16 (*get_mask_res_ack)(struct dpram_link_device *dpld, int id);
+	u16 (*get_mask_send)(struct dpram_link_device *dpld, int id);
+
+	/* Extended operations for various modems */
+	struct dpram_ext_op *ext_op;
 };
 
 /* converts from struct link_device* to struct xxx_link_device* */
 #define to_dpram_link_device(linkdev) \
 		container_of(linkdev, struct dpram_link_device, ld)
+
+struct dpram_ext_op {
+	int exist;
+
+	void (*init_boot_map)(struct dpram_link_device *dpld);
+	void (*init_dl_map)(struct dpram_link_device *dpld);
+	void (*init_ul_map)(struct dpram_link_device *dpld);
+
+	int (*prepare_download)(struct dpram_link_device *dpld);
+	int (*download_boot)(struct dpram_link_device *dpld, void *arg);
+	int (*download_skb)(struct dpram_link_device *dpld,
+				struct sk_buff *skb);
+	int (*download_bin)(struct dpram_link_device *dpld, void *arg);
+	int (*download_nv)(struct dpram_link_device *dpld, void *arg);
+	void (*dload_cmd_handler)(struct dpram_link_device *dpld, u16 cmd);
+	void (*dl_task)(unsigned long data);
+
+	int (*cp_boot_start)(struct dpram_link_device *dpld);
+	int (*cp_boot_post_process)(struct dpram_link_device *dpld);
+	void (*cp_start_handler)(struct dpram_link_device *dpld);
+
+	int (*dump_start)(struct dpram_link_device *dpld);
+	int (*dump_update)(struct dpram_link_device *dpld, void *arg);
+
+	void (*log_disp)(struct dpram_link_device *dpld);
+	int (*upload_step1)(struct dpram_link_device *dpld);
+	int (*upload_step2)(struct dpram_link_device *dpld, void *arg);
+};
+
+struct dpram_ext_op *dpram_get_ext_op(enum modem_t modem);
 
 #endif

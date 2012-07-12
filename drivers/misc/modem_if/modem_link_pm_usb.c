@@ -150,6 +150,9 @@ static int link_pm_hub_standby(void *args)
 	struct usb_link_device *usb_ld = pm_data->usb_ld;
 	int err = 0;
 
+	if (!has_hub(usb_ld))
+		return err;
+
 	mif_info("wait hub standby\n");
 
 	if (!pm_data->port_enable) {
@@ -201,7 +204,10 @@ static long link_pm_ioctl(struct file *file, unsigned int cmd,
 						unsigned long arg)
 {
 	int value, err = 0;
+	struct task_struct *task = get_current();
 	struct link_pm_data *pm_data = file->private_data;
+	struct usb_link_device *usb_ld = pm_data->usb_ld;
+	char taskname[TASK_COMM_LEN];
 
 	mif_info("cmd: 0x%08x\n", cmd);
 
@@ -215,7 +221,7 @@ static long link_pm_ioctl(struct file *file, unsigned int cmd,
 	case IOCTL_LINK_GET_HOSTWAKE:
 		return !gpio_get_value(pm_data->gpio_link_hostwake);
 	case IOCTL_LINK_CONNECTED:
-		return pm_data->usb_ld->if_usb_connected;
+		return usb_ld->if_usb_connected;
 	case IOCTL_LINK_PORT_ON: /* hub only */
 		/* ignore cp host wakeup irq, set the hub_init_lock when AP try
 		 CP off and release hub_init_lock when CP boot done */
@@ -239,6 +245,13 @@ static long link_pm_ioctl(struct file *file, unsigned int cmd,
 		}
 		pm_data->hub_init_lock = 1;
 		pm_data->hub_handshake_done = 0;
+		break;
+	case IOCTL_LINK_BLOCK_AUTOSUSPEND: /* block autosuspend forever */
+		mif_info("blocked autosuspend by `%s(%d)'\n",
+				get_task_comm(taskname, task), task->pid);
+		pm_data->block_autosuspend = true;
+		if (usb_ld->usbdev)
+			pm_runtime_forbid(&usb_ld->usbdev->dev);
 		break;
 	default:
 		break;
@@ -306,9 +319,10 @@ int link_pm_init(struct usb_link_device *usb_ld, void *data)
 	pm_data->gpio_link_slavewake = pm_pdata->gpio_link_slavewake;
 	pm_data->link_reconnect = pm_pdata->link_reconnect;
 	pm_data->port_enable = pm_pdata->port_enable;
-	pm_data->cpufreq_lock = pm_pdata->cpufreq_lock;
-	pm_data->cpufreq_unlock = pm_pdata->cpufreq_unlock;
+	pm_data->freq_lock = pm_pdata->freq_lock;
+	pm_data->freq_unlock = pm_pdata->freq_unlock;
 	pm_data->autosuspend_delay_ms = pm_pdata->autosuspend_delay_ms;
+	pm_data->block_autosuspend = false;
 
 	pm_data->usb_ld = usb_ld;
 	usb_ld->link_pm_data = pm_data;
@@ -361,5 +375,3 @@ err_misc_register:
 	kfree(pm_data);
 	return err;
 }
-
-

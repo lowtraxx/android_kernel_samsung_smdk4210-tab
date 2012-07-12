@@ -31,8 +31,6 @@
 #include <plat/map-s5p.h>
 #include <asm/mach/map.h>
 #include <plat/regs-watchdog.h>
-#include <linux/seq_file.h>
-#include <linux/mfd/max77693-private.h>
 
 #if defined(CONFIG_SEC_MODEM_P8LTE)
 #include <linux/miscdevice.h>
@@ -62,22 +60,10 @@ struct sched_log {
 };
 #endif				/* CONFIG_SEC_DEBUG_SCHED_LOG */
 
-#ifdef CONFIG_SEC_DEBUG_ALLOC_PROFILE
-struct alloc_prof_log {
-	unsigned long long time;
-	int cpu;
-	pid_t pid;
-	unsigned long long elapsed;
-	unsigned int types;
-	unsigned int retry_cnt;
-	unsigned dup;
-	unsigned int order;
-} sec_log_alloc_prof[SCHED_LOG_MAX];
-#endif
-
 #ifdef CONFIG_SEC_DEBUG_AUXILIARY_LOG
 #define AUX_LOG_CPU_CLOCK_MAX 64
 #define AUX_LOG_LOGBUF_LOCK_MAX 64
+#define AUX_LOG_DVFS_LOCK_MAX 64
 #define AUX_LOG_LENGTH 128
 
 struct auxiliary_info {
@@ -90,6 +76,7 @@ struct auxiliary_info {
 struct auxiliary_log {
 	struct auxiliary_info CpuClockLog[AUX_LOG_CPU_CLOCK_MAX];
 	struct auxiliary_info LogBufLockLog[AUX_LOG_LOGBUF_LOCK_MAX];
+	struct auxiliary_info DVFSLockLog[AUX_LOG_DVFS_LOCK_MAX];
 };
 
 #else
@@ -132,16 +119,6 @@ struct rwsem_debug {
  */
 #define SEC_DEBUG_MAGIC_PA S5P_PA_SDRAM
 #define SEC_DEBUG_MAGIC_VA phys_to_virt(SEC_DEBUG_MAGIC_PA)
-
-extern cable_type_t max77693_muic_get_attached_device(void);
-
-enum sec_debug_reset_reason_t {
-	RR_S = 1,
-	RR_W = 2,
-	RR_D = 3,
-	RR_N = 4,
-	RR_P = 5
-};
 
 enum sec_debug_upload_cause_t {
 	UPLOAD_CAUSE_INIT = 0xCAFEBABE,
@@ -242,9 +219,7 @@ struct sec_debug_core_t {
  * The other cases are not considered
  */
 union sec_debug_level_t sec_debug_level = { .en.kernel_fault = 1, };
-static unsigned reset_reason = RR_N;
 
-module_param_named(reset_reason, reset_reason, uint, 0644);
 module_param_named(enable, sec_debug_level.en.kernel_fault, ushort, 0644);
 module_param_named(enable_user, sec_debug_level.en.user_fault, ushort, 0644);
 module_param_named(level, sec_debug_level.uint_val, uint, 0644);
@@ -260,11 +235,6 @@ static atomic_t task_log_idx[NR_CPUS] = { ATOMIC_INIT(-1), ATOMIC_INIT(-1) };
 static atomic_t irq_log_idx[NR_CPUS] = { ATOMIC_INIT(-1), ATOMIC_INIT(-1) };
 static atomic_t work_log_idx[NR_CPUS] = { ATOMIC_INIT(-1), ATOMIC_INIT(-1) };
 static struct sched_log (*psec_debug_log) = (&sec_debug_log);
-#ifdef CONFIG_SEC_DEBUG_ALLOC_PROFILE
-static atomic_t sec_log_alloc_prof_idx = ATOMIC_INIT(-1);
-static atomic_t sec_log_alloc_prof_lock = ATOMIC_INIT(0);
-static bool sec_log_alloc_prof_idx_rnd = false;
-#endif
 /*
 static struct sched_log (*psec_debug_log)[NR_CPUS][SCHED_LOG_MAX]
 	= (&sec_debug_log);
@@ -278,6 +248,7 @@ static struct auxiliary_log gExcpAuxLog	__cacheline_aligned;
 static struct auxiliary_log *gExcpAuxLogPtr;
 static atomic_t gExcpAuxCpuClockLogIdx = ATOMIC_INIT(-1);
 static atomic_t gExcpAuxLogBufLockLogIdx = ATOMIC_INIT(-1);
+static atomic_t gExcpAuxDVFSLockLogIdx = ATOMIC_INIT(-1);
 #endif
 
 static int checksum_sched_log(void)
@@ -642,21 +613,14 @@ module_exit(sec_cp_upload_exit);
 static int sec_debug_panic_handler(struct notifier_block *nb,
 				   unsigned long l, void *buf)
 {
-    cable_type_t  type = max77693_muic_get_attached_device();
-
-	if ((type != CABLE_TYPE_JIG_UART_OFF_MUIC ||
-		type != CABLE_TYPE_JIG_UART_OFF_VB_MUIC) && (strcmp(buf, "Commercial Dump")))
-		if (!sec_debug_level.en.kernel_fault)
-			return -1;
+	if (!sec_debug_level.en.kernel_fault)
+		return -1;
 
 	local_irq_disable();
 
 	sec_debug_set_upload_magic(0x66262564, buf);
 
-	if ((type == CABLE_TYPE_JIG_UART_OFF_MUIC ||
-			type == CABLE_TYPE_JIG_UART_OFF_VB_MUIC) && (!strcmp(buf, "Commercial Dump")))
-		sec_debug_set_upload_cause(UPLOAD_CAUSE_FORCED_UPLOAD);
-	else if (!strcmp(buf, "User Fault"))
+	if (!strcmp(buf, "User Fault"))
 		sec_debug_set_upload_cause(UPLOAD_CAUSE_USER_FAULT);
 	else if (!strcmp(buf, "Crash Key"))
 		sec_debug_set_upload_cause(UPLOAD_CAUSE_FORCED_UPLOAD);
@@ -683,94 +647,62 @@ static int sec_debug_panic_handler(struct notifier_block *nb,
 	return 0;
 }
 
+#if defined(CONFIG_MACH_Q1_BD)
+/*
+ * This function can be used while current pointer is invalid.
+ */
+int sec_debug_panic_handler_safe(void *buf)
+{
+	local_irq_disable();
+
+	sec_debug_set_upload_magic(0x66262564, buf);
+
+	sec_debug_set_upload_cause(UPLOAD_CAUSE_KERNEL_PANIC);
+
+	pr_err("(%s) checksum_sched_log: %x\n", __func__, checksum_sched_log());
+
+	sec_debug_dump_stack();
+	sec_debug_hw_reset();
+
+	return 0;
+}
+#endif
+
 #ifdef CONFIG_SEC_DEBUG_FUPLOAD_DUMP_MORE
 static void dump_state_and_upload(void);
 #endif
 
-#define LOCKUP_FIRST_KEY KEY_VOLUMEUP
-#define LOCKUP_SECOND_KEY KEY_POWER
-#define LOCKUP_THIRD_KEY KEY_POWER
-#define LOCKUP_EXTRA_KEY KEY_VOLUMEDOWN
-
 void sec_debug_check_crash_key(unsigned int code, int value)
 {
-	static enum { NONE, STEP1, STEP2, STEP3, STEP4, STEP5, STEP6, STEP7, STEP8, STEP9, STEP10} state = NONE;
-
 	static bool volup_p;
 	static bool voldown_p;
 	static int loopcount;
 
 	/* In Case of GC1,
-	 * use Tele key as Volume down,
-	 * use Wide key as volume up.
+	 * use Tele key as Volume up,
+	 * use Wide key as volume down.
 	 */
 #ifdef CONFIG_MACH_GC1
-	static const unsigned int VOLUME_UP = KEY_CAMERA_ZOOMOUT;
-	static const unsigned int VOLUME_DOWN = KEY_CAMERA_ZOOMIN;
+	static unsigned int VOLUME_UP = 0x221;
+	static unsigned int VOLUME_DOWN = 0x222;
+
+	if (system_rev < 2) {
+		VOLUME_UP = KEY_CAMERA_ZOOMIN;
+		VOLUME_DOWN = KEY_CAMERA_ZOOMOUT;
+	}
 #else
 	static const unsigned int VOLUME_UP = KEY_VOLUMEUP;
 	static const unsigned int VOLUME_DOWN = KEY_VOLUMEDOWN;
 #endif
 
-	if (!sec_debug_level.en.kernel_fault) {
-        switch (state)
-		{
-		case NONE:
-			state = (code == LOCKUP_FIRST_KEY && value) ? STEP1 : NONE;
-			break;
-		case STEP1:
-			state = (code == LOCKUP_EXTRA_KEY && value) ? STEP2 : NONE;
-			break;
-		case STEP2:
-			state = (code == LOCKUP_FIRST_KEY && !value) ? STEP3 : NONE;
-			break;
-		case STEP3:
-			state = (code == LOCKUP_FIRST_KEY && value) ? STEP4 : NONE;
-			break;
-		case STEP4:
-			state = (code == LOCKUP_FIRST_KEY && !value) ? STEP5 : NONE;
-			break;
-		case STEP5:
-			state = (code == LOCKUP_FIRST_KEY && value) ? STEP6 : NONE;
-			break;
-		case STEP6:
-			state = (code == LOCKUP_EXTRA_KEY && !value) ? STEP7 : NONE;
-			break;
-		case STEP7:
-			state = (code == LOCKUP_EXTRA_KEY && value) ? STEP8 : NONE;
-			break;
-		case STEP8:
-			state = (code == LOCKUP_EXTRA_KEY && !value) ? STEP9 : NONE;
-			break;
-		case STEP9:
-			state = (code == LOCKUP_EXTRA_KEY && value) ? STEP10 : NONE;
-			break;
-		case STEP10:
-			if (code == LOCKUP_THIRD_KEY && value) 
-			{
-				cable_type_t  type = max77693_muic_get_attached_device();
-
-				if (type == CABLE_TYPE_JIG_UART_OFF_MUIC ||
-					type == CABLE_TYPE_JIG_UART_OFF_VB_MUIC) {
-					panic("Commercial Dump");
-				}
-			}
-			else
-				state = NONE;
-
-			break;
-		default:
-			break;
-		}
+	if (!sec_debug_level.en.kernel_fault)
 		return;
-    }
 
 	/* Must be deleted later */
 #if defined(CONFIG_MACH_MIDAS) || defined(CONFIG_SLP)
 	pr_info("%s:key code(%d) value(%d)\n",
 		__func__, code, value);
 #endif
-	pr_info("HZ : %d\n", HZ);
 
 	/* Enter Force Upload
 	 *  Hold volume down key first
@@ -921,36 +853,6 @@ void __sec_debug_work_log(struct worker *worker,
 	psec_debug_log->work[cpu][i].f = f;
 }
 
-#ifdef CONFIG_SEC_DEBUG_ALLOC_PROFILE
-void __sec_debug_alloc_profile(unsigned long long start_time,
-		unsigned int retry_cnt, unsigned int types,
-		atomic_t dup, unsigned int order)
-{
-	int cpu = raw_smp_processor_id();
-	unsigned long long time = cpu_clock(cpu);
-	unsigned i;
-
-	if (time - start_time > 100000) {
-		if (atomic_read(&sec_log_alloc_prof_lock))
-			return;
-
-		i = atomic_inc_return(&sec_log_alloc_prof_idx) & (SCHED_LOG_MAX - 1);
-		if ((!sec_log_alloc_prof_idx_rnd) && (atomic_read(&sec_log_alloc_prof_idx) >= SCHED_LOG_MAX)) {
-			sec_log_alloc_prof_idx_rnd = true;
-		}
-
-		sec_log_alloc_prof[i].cpu = cpu;
-		sec_log_alloc_prof[i].pid = current->pid;	
-		sec_log_alloc_prof[i].elapsed = time - start_time;
-		sec_log_alloc_prof[i].retry_cnt = retry_cnt;
-		sec_log_alloc_prof[i].types = types;
-		sec_log_alloc_prof[i].time = time;
-		sec_log_alloc_prof[i].dup = atomic_read(&dup);
-		sec_log_alloc_prof[i].order = order;
-	}
-}
-#endif
-
 #ifdef CONFIG_SEC_DEBUG_IRQ_EXIT_LOG
 void sec_debug_irq_last_exit_log(void)
 {
@@ -990,6 +892,14 @@ void sec_debug_aux_log(int idx, char *fmt, ...)
 		(*gExcpAuxLogPtr).LogBufLockLog[i].time = cpu_clock(cpu);
 		(*gExcpAuxLogPtr).LogBufLockLog[i].cpu = cpu;
 		strncpy((*gExcpAuxLogPtr).LogBufLockLog[i].log,
+			buf, AUX_LOG_LENGTH);
+		break;
+	case SEC_DEBUG_AUXLOG_DVFS_LOCK_CHANGE:
+		i = atomic_inc_return(&gExcpAuxDVFSLockLogIdx)
+			& (AUX_LOG_DVFS_LOCK_MAX - 1);
+		(*gExcpAuxLogPtr).DVFSLockLog[i].time = cpu_clock(cpu);
+		(*gExcpAuxLogPtr).DVFSLockLog[i].cpu = cpu;
+		strncpy((*gExcpAuxLogPtr).DVFSLockLog[i].log,
 			buf, AUX_LOG_LENGTH);
 		break;
 	default:
@@ -1182,7 +1092,7 @@ static int __init sec_debug_user_fault_init(void)
 {
 	struct proc_dir_entry *entry;
 
-	entry = proc_create("user_fault", S_IWUGO, NULL,
+	entry = proc_create("user_fault", S_IWUSR | S_IWGRP, NULL,
 			    &sec_user_fault_proc_fops);
 	if (!entry)
 		return -ENOMEM;
@@ -1191,49 +1101,6 @@ static int __init sec_debug_user_fault_init(void)
 
 device_initcall(sec_debug_user_fault_init);
 #endif
-
-static int set_reset_reason_proc_show(struct seq_file *m, void *v)
-{
-	printk("%s : %d", __func__, reset_reason);
-	if (reset_reason == RR_S)
-		seq_printf(m, "SPON\n");
-	else if(reset_reason == RR_W)
-		seq_printf(m, "WPON\n");
-	else if(reset_reason == RR_D)
-		seq_printf(m, "DPON\n");
-        else if(reset_reason == RR_P)
-		seq_printf(m, "PPON\n");
-	else
-		seq_printf(m, "NPON\n");
-
-	return 0;
-}
-
-static int sec_reset_reason_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, set_reset_reason_proc_show, NULL);
-}
-
-static const struct file_operations sec_reset_reason_proc_fops = {
-	.open		= sec_reset_reason_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-static int __init sec_debug_reset_reason_init(void)
-{
-	struct proc_dir_entry *entry;
-
-	entry = proc_create("reset_reason", S_IWUGO, NULL,
-			    &sec_reset_reason_proc_fops);
-	if (!entry)
-		return -ENOMEM;
-
-	return 0;
-}
-
-device_initcall(sec_debug_reset_reason_init);
 
 int sec_debug_magic_init(void)
 {
@@ -1483,57 +1350,3 @@ static void dump_state_and_upload(void)
 	sec_debug_hw_reset();
 }
 #endif /* CONFIG_SEC_DEBUG_FUPLOAD_DUMP_MORE */
-
-#ifdef CONFIG_SEC_DEBUG_ALLOC_PROFILE
-static int alloc_prof_proc_show(struct seq_file *m, void *v)
-{
-	int i;
-	int loop_end;
-
-	atomic_set(&sec_log_alloc_prof_lock, 1);
-	if (sec_log_alloc_prof_idx_rnd)
-		loop_end = SCHED_LOG_MAX - 1;
-	else
-		loop_end = atomic_read(&sec_log_alloc_prof_idx);
-
-	for (i = 0; i <= loop_end; i++) {
-		seq_printf(m, "[%15llu] [%d:%5d] elapsed:%9llu types:%d "
-			"order:%d retry:%d dup:%d\n",
-			sec_log_alloc_prof[i].time,
-			sec_log_alloc_prof[i].cpu,
-			sec_log_alloc_prof[i].pid,
-			sec_log_alloc_prof[i].elapsed,
-			sec_log_alloc_prof[i].types,
-			sec_log_alloc_prof[i].order,
-			sec_log_alloc_prof[i].retry_cnt,
-			sec_log_alloc_prof[i].dup);
-	}
-
-	atomic_set(&sec_log_alloc_prof_lock, 0);
-	return 0;
-}
-
-static int alloc_prof_proc_open(struct inode *inode, struct file *file)
-{
-		return single_open(file, alloc_prof_proc_show, NULL);
-}
-
-static const struct file_operations alloc_prof_proc_fops = {
-	.open		= alloc_prof_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-static int __init proc_alloc_profile_init(void)
-{
-	struct proc_dir_entry *entry;
-
-	entry = proc_create("alloc_prof", S_IRUGO, NULL, &alloc_prof_proc_fops);
-	if (!entry)
-		return -ENOMEM;
-
-	return 0;
-}
-device_initcall(proc_alloc_profile_init);
-#endif

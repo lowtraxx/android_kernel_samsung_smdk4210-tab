@@ -4606,13 +4606,8 @@ static struct sec_jack_zone sec_jack_zones[] = {
 		 * stays in this range for 100ms (10ms delays, 10 samples)
 		 */
 		.adc_high = 3800,
-#if defined(CONFIG_MACH_Q1_BD)
 		.delay_ms = 15,
 		.check_count = 20,
-#else
-		.delay_ms = 10,
-		.check_count = 5,
-#endif
 		.jack_type = SEC_HEADSET_4POLE,
 	},
 	{
@@ -4688,10 +4683,10 @@ static void mxt224_power_on(void)
 	s3c_gpio_cfgpin(GPIO_TSP_LDO_ON, S3C_GPIO_OUTPUT);
 	s3c_gpio_setpull(GPIO_TSP_LDO_ON, S3C_GPIO_PULL_NONE);
 	gpio_set_value(GPIO_TSP_LDO_ON, 1);
-	mdelay(70);
+	msleep(70);
 	s3c_gpio_setpull(GPIO_TSP_INT, S3C_GPIO_PULL_NONE);
 	s3c_gpio_cfgpin(GPIO_TSP_INT, S3C_GPIO_SFN(0xf));
-	mdelay(40);
+	msleep(40);
 }
 
 static void mxt224_power_off(void)
@@ -4796,10 +4791,10 @@ static void mxt224_power_on(void)
 	s3c_gpio_cfgpin(GPIO_TSP_LDO_ON, S3C_GPIO_OUTPUT);
 	s3c_gpio_setpull(GPIO_TSP_LDO_ON, S3C_GPIO_PULL_NONE);
 	gpio_set_value(GPIO_TSP_LDO_ON, 1);
-	mdelay(70);
+	msleep(70);
 	s3c_gpio_setpull(GPIO_TSP_INT, S3C_GPIO_PULL_NONE);
 	s3c_gpio_cfgpin(GPIO_TSP_INT, S3C_GPIO_SFN(0xf));
-	mdelay(40);
+	msleep(40);
 	/* printk("mxt224_power_on is finished\n"); */
 }
 
@@ -6371,9 +6366,6 @@ static void __init mipi_fb_init(void)
 	 */
 	printk(KERN_INFO "%s :: fb_platform_data.hw_ver = 0x%x\n",
 	       __func__, fb_platform_data.hw_ver);
-
-	fb_platform_data.mipi_is_enabled = 1;
-	fb_platform_data.interface_mode = FIMD_CPU_INTERFACE;
 
 	dsim_pd = (struct s5p_platform_dsim *)
 	    s5p_device_dsim.dev.platform_data;

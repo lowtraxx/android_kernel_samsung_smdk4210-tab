@@ -220,16 +220,11 @@ struct iommu_info_node {
  * Exynos drm g2d private structure
  *
  * @dev: device object to device driver for using iommu.
- * @iommu_map_list: list head to iommu map information.
- *	each device driver using iommu should have its own iommu_map_list
- *	because device drivers have their own device address space and
- *	the device address spaces could be duplicated echo other.
  */
 struct exynos_drm_g2d_private {
 	struct device		*dev;
 	struct list_head	inuse_cmdlist;
 	struct list_head	event_list;
-	struct list_head	iommu_map_list;
 };
 
 /*
@@ -272,6 +267,9 @@ struct exynos_drm_private {
 	 * - as default, this has 16MB and only root user can change it.
 	 */
 	unsigned long userptr_limit;
+
+	/* a iovmm object for iommu support. */
+	void *vmm;
 };
 
 /*
@@ -299,7 +297,7 @@ struct exynos_drm_subdrv {
 	struct exynos_drm_manager *manager;
 
 	int (*probe)(struct drm_device *drm_dev, struct device *dev);
-	void (*remove)(struct drm_device *dev);
+	void (*remove)(struct drm_device *drm_dev, struct device *dev);
 	int (*open)(struct drm_device *drm_dev, struct device *dev,
 			struct drm_file *file);
 	void (*close)(struct drm_device *drm_dev, struct device *dev,
@@ -343,4 +341,5 @@ extern struct platform_driver vidi_driver;
 extern struct platform_driver g2d_driver;
 extern struct platform_driver rotator_driver;
 extern struct platform_driver fimc_driver;
+extern struct platform_driver gsc_driver;
 #endif

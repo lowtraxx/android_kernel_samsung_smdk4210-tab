@@ -16,7 +16,7 @@
  */
 
 #define SHOW_COORD		1
-#define FW_UPDATABLE		0
+#define FW_UPDATABLE		1
 #define ISC_DL_MODE		1
 #define TOUCH_BOOSTER		0
 #define SEC_TSP_FACTORY_TEST	1
@@ -53,11 +53,13 @@
 /* Registers */
 #define MMS_INPUT_EVENT_PKT_SZ	0x0F
 #define MMS_INPUT_EVENT0	0x10
-#define MMS_FW_VER_CORE		0xF3 /* GC Bring-up */
-#define MMS_FW_VER_PRIV		0xF4 /* GC Bring-up */
-#define MMS_FW_VER_PUBL		0xF5 /* GC Bring-up */
-#define MMS_FW_VERSION		0xF5 /* GC Bring-up */
-#define MMS_TA_NOISE_REG	0x30 /* GC Bring-up */
+
+#define MMS_TSP_REVISION	0xF0
+#define MMS_HW_REVISION		0xF1
+#define MMS_COMPAT_GROUP	0xF2
+#define MMS_FW_VERSION		0xF3
+
+#define MMS_TA_NOISE_REG	0x60 /* GC Bring-up */
 #define MMS_TA_NOISE_ON		0x01 /* GC Bring-up */
 #define MMS_TA_NOISE_OFF	0x02 /* GC Bring-up */
 
@@ -92,6 +94,17 @@ enum {
 	BUILT_IN = 0,
 	UMS,
 	REQ_FW,
+};
+
+enum {
+	COMPARE_UPDATE = 0,
+	FORCED_UPDATE,
+};
+
+enum {
+	PANEL_MOREENS	= 'A',
+	PANEL_SMAC	= 'B',
+	PANEL_MELFAS	= 'C',
 };
 
 enum {
@@ -206,10 +219,6 @@ static bool section_update_flag[SECTION_NUM];
 const struct firmware *fw_mbin[SECTION_NUM];
 static unsigned char g_wr_buf[1024 + 3 + 2];
 
-enum {
-	COMPARE_UPDATE = 0,
-	FORCED_UPDATE,
-};
 #endif	/* ISC_DL_MODE end */
 
 enum {
@@ -272,6 +281,7 @@ struct mms_ts_info {
 	void	(*input_event)(void *data);
 	bool	enabled;
 	u8	fw_ic_ver;
+	u8	panel_type;
 	const u8	*config_fw_version;
 	unsigned char	finger_state[MAX_FINGERS];
 
@@ -635,7 +645,7 @@ static int mms100_compare_version_info(struct i2c_client *_client,
 		ts_info[SEC_CORE].version;
 	}
 
-	for (i = SEC_CORE; i < SEC_PUBLIC_CONFIG; i++) {
+	for (i = SEC_CORE; i <= SEC_PUBLIC_CONFIG; i++) {
 		if (section_update_flag[i]) {
 			pr_info("[TSP ISC] section_update_flag(%d), 0x%02x, 0x%02x\n",
 				i, expected_compatibility[i],
@@ -853,7 +863,8 @@ static int mms100_update_section_data(struct i2c_client *_client)
 	return ISC_SUCCESS;
 }
 
-static int mms100_open_mbinary(struct i2c_client *_client, int mode)
+static int mms100_open_mbinary(struct i2c_client *_client,
+						int panel_type, int mode)
 {
 	int i;
 	int ret = 0;
@@ -864,8 +875,9 @@ static int mms100_open_mbinary(struct i2c_client *_client, int mode)
 
 	if (mode == REQ_FW) {
 		for (i = SEC_CORE; i <= SEC_PUBLIC_CONFIG ; i++) {
-			snprintf(fw_path, MAX_FW_PATH, "%s%s.fw",
-						FW_DIRECTORY, section_name[i]);
+			snprintf(fw_path, MAX_FW_PATH, "%s%c_%s.fw",
+				FW_DIRECTORY, panel_type, section_name[i]);
+			pr_info("[TSP ISC] Load FW[%s]", fw_path);
 
 			ret = request_firmware(&(fw_mbin[i]), fw_path,
 								&_client->dev);
@@ -938,7 +950,7 @@ static int mms100_open_mbinary(struct i2c_client *_client, int mode)
 }
 
 int mms100_ISC_download_mbinary(struct i2c_client *_client, int mode,
-							bool forced_update)
+					int panel_type, bool forced_update)
 {
 	int ret_msg = ISC_NONE;
 
@@ -949,7 +961,7 @@ int mms100_ISC_download_mbinary(struct i2c_client *_client, int mode,
 	if (ret_msg != ISC_SUCCESS)
 		goto ISC_ERROR_HANDLE;
 */
-	ret_msg = mms100_open_mbinary(_client, mode);
+	ret_msg = mms100_open_mbinary(_client, panel_type, mode);
 	if (ret_msg != ISC_SUCCESS)
 		goto ISC_ERROR_HANDLE;
 
@@ -1316,7 +1328,7 @@ static irqreturn_t mms_ts_interrupt(int irq, void *dev_id)
 	input_sync(info->input_dev);
 
 #if TOUCH_BOOSTER
-	for (i = 0 ; MAX_FINGERS ; i++) {
+	for (i = 0 ; i < MAX_FINGERS ; i++) {
 		if (info->finger_state[i] == TSP_STATE_PRESS
 			|| info->finger_state[i] == TSP_STATE_MOVE) {
 			press_flag = TOUCH_BOOSTER_ON;
@@ -1641,12 +1653,30 @@ static int get_fw_version(struct mms_ts_info *info)
 		ret = i2c_smbus_read_byte_data(info->client, MMS_FW_VERSION);
 	} while (ret < 0 && retries-- > 0);
 
-	dev_info(&client->dev, "MMS_FW_VER_CORE [0x%02x]",
-		i2c_smbus_read_byte_data(info->client, MMS_FW_VER_CORE));
-	dev_info(&client->dev, "MMS_FW_VER_PRIV [0x%02x]",
-		i2c_smbus_read_byte_data(info->client, MMS_FW_VER_PRIV));
-	dev_info(&client->dev, "MMS_FW_VER_PUBL [0x%02x]",
-		i2c_smbus_read_byte_data(info->client, MMS_FW_VER_PUBL));
+	dev_info(&client->dev, "MMS_TSP_REVISION = [0x%02x]",
+		i2c_smbus_read_byte_data(info->client, MMS_TSP_REVISION));
+	dev_info(&client->dev, "MMS_HW_REVISION = [0x%02x]",
+		i2c_smbus_read_byte_data(info->client, MMS_HW_REVISION));
+	dev_info(&client->dev, "MMS_COMPAT_GROUP = [0x%02x]",
+		i2c_smbus_read_byte_data(info->client, MMS_COMPAT_GROUP));
+	dev_info(&client->dev, "MMS_FW_VERSION = [0x%02x]", ret);
+
+	return ret;
+}
+
+static int get_panel_type(struct mms_ts_info *info)
+{
+	struct i2c_client *client = info->client;
+	int ret;
+	int retries = 3;
+
+	/* this seems to fail sometimes after a reset.. retry a few times */
+	do {
+		ret = i2c_smbus_read_byte_data(info->client, MMS_TSP_REVISION);
+	} while (ret < 0 && retries-- > 0);
+
+	dev_info(&client->dev, "MMS_TSP_REVISION = [0x%02x],[%c]", ret, ret);
+
 	return ret;
 }
 
@@ -1675,42 +1705,6 @@ static int mms_ts_finish_config(struct mms_ts_info *info)
 err_req_irq:
 	return ret;
 }
-static int mms_ts_fw_info(struct mms_ts_info *info)
-{
-	struct i2c_client *client = info->client;
-	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
-	int ret = 0;
-	int ver;
-
-	/* firmware check */
-	ver = get_fw_version(info);
-	info->fw_ic_ver = ver;
-	dev_info(&client->dev, "FW ver [0x%02x]", ver);
-
-	if (!info->pdata || !info->pdata->mux_fw_flash) {
-		ret = 1;
-		dev_err(&client->dev,
-			"fw cannot be updated, missing platform data\n");
-		return ret;
-	}
-
-	ret = request_threaded_irq(client->irq, NULL, mms_ts_interrupt,
-				   IRQF_TRIGGER_LOW  | IRQF_ONESHOT,
-				   MELFAS_TS_NAME, info);
-	if (ret < 0) {
-		ret = 1;
-		dev_err(&client->dev, "Failed to register interrupt\n");
-		return ret;
-	}
-
-	info->irq = client->irq;
-	barrier();
-
-	dev_info(&client->dev,
-		 "Melfas MMS-series touch controller initialized\n");
-
-	return ret;
-}
 
 static int mms_ts_fw_load(struct mms_ts_info *info)
 {
@@ -1718,15 +1712,35 @@ static int mms_ts_fw_load(struct mms_ts_info *info)
 	struct i2c_client *client = info->client;
 	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
 	int ret = 0, ret_isp = 0;
-	int ver = 0x00;
 	int retries_isc = 3;
 	int retries_isp = 3;
 
 	/* firmware check */
-	ver = get_fw_version(info);
-	info->fw_ic_ver = ver;
-	dev_info(&client->dev, "FW ver. [0x%02x]", ver);
-	goto done;	/* GC Bring-up */
+	info->fw_ic_ver = get_fw_version(info);
+	dev_info(&client->dev, "TSP fw ver : [0x%02x]", info->fw_ic_ver);
+
+	if (system_rev < 2) {
+		dev_err(&client->dev, "FW update skip[%d]\n", system_rev);
+		goto done;
+	}
+
+	info->panel_type = get_panel_type(info);
+	if (system_rev == 2 && info->fw_ic_ver == 0x01)
+		info->panel_type = PANEL_MOREENS;
+
+	if (system_rev >= 3)
+		info->panel_type = PANEL_SMAC;
+
+	/* Add  panel type check logic */
+	if (info->panel_type != PANEL_MOREENS && \
+					info->panel_type != PANEL_SMAC) {
+		dev_err(&client->dev, "abnormal panel type[%c]!\n",
+							info->panel_type);
+		goto done;
+	}
+
+	dev_info(&client->dev, "Rev = 0x%02x, %c type Panel\n",
+						system_rev, info->panel_type);
 
 	if (!info->pdata || !info->pdata->mux_fw_flash) {
 		ret = 1;
@@ -1736,12 +1750,17 @@ static int mms_ts_fw_load(struct mms_ts_info *info)
 	}
 
 #if FW_UPDATABLE
-/* firmware update 3 try */
-/* ISC firmware update */
 
-	/* ISP firmware update */
 	while (retries_isc--) {
-		ret = mms100_ISC_download_mbinary(client, REQ_FW,
+		/* ISC firmware update */
+		if (info->fw_ic_ver == 0x00) {
+			dev_err(&client->dev, "TSP panel info dismatched\n");
+			ret = mms100_ISC_download_mbinary(client, REQ_FW,
+							info->panel_type,
+							FORCED_UPDATE);
+		} else
+			ret = mms100_ISC_download_mbinary(client, REQ_FW,
+							info->panel_type,
 							COMPARE_UPDATE);
 
 		if (ret > 0) {
@@ -1751,9 +1770,10 @@ static int mms_ts_fw_load(struct mms_ts_info *info)
 			info->pdata->mux_fw_flash(true);
 
 			while (retries_isp--) {
+				/* ISP firmware update */
 				ret_isp = mms100_ISP_download(info,
-							BOOT_binary,
-							BOOT_binary_nLength);
+							boot_binary,
+							boot_binary_nLength);
 				if (ret_isp < 0)
 					dev_err(&client->dev,
 						"ISP D/L mode fail\n");
@@ -1768,14 +1788,15 @@ static int mms_ts_fw_load(struct mms_ts_info *info)
 			i2c_unlock_adapter(adapter);
 
 			ret = mms100_ISC_download_mbinary(client, REQ_FW,
-								FORCED_UPDATE);
+							info->panel_type,
+							FORCED_UPDATE);
 		}
 
 		if (ret == ISC_SUCCESS) {
-			ver = get_fw_version(info);
-			info->fw_ic_ver = ver;
+			info->fw_ic_ver = get_fw_version(info);
+			info->pdata->fw_version = mbin_info[SEC_PUBLIC_CONFIG].version;
 			dev_info(&client->dev, "fw update done: ver = 0x%02x\n",
-						ver);
+							info->fw_ic_ver);
 			goto done;
 		}
 		dev_err(&client->dev, "retrying flashing\n");
@@ -2051,8 +2072,6 @@ static void fw_update(void *device_data)
 		"fw_ic_ver = 0x%02x, fw_bin_ver = 0x%02x\n",
 		info->fw_ic_ver, info->pdata->fw_version);
 
-	goto not_support;	/* GC Bring up- Not support yet */
-
 	switch (info->cmd_param[0]) {
 	case BUILT_IN:
 		info->cmd_param[0] = REQ_FW;
@@ -2078,6 +2097,7 @@ static void fw_update(void *device_data)
 
 #if ISC_DL_MODE
 		ret = mms100_ISC_download_mbinary(client, info->cmd_param[0],
+							info->panel_type,
 							FORCED_UPDATE);
 #endif
 		if (ret) {
@@ -2776,7 +2796,6 @@ static int __devinit mms_ts_probe(struct i2c_client *client,
 		goto err_config;
 	}
 
-/*	ret = mms_ts_fw_info(info); */
 	ret = mms_ts_fw_load(info);
 
 	if (ret) {
@@ -2830,6 +2849,12 @@ static int __devinit mms_ts_probe(struct i2c_client *client,
 	info->early_suspend.resume = mms_ts_late_resume;
 	register_early_suspend(&info->early_suspend);
 #endif
+
+	if (system_rev < 2) {
+		info->pdata->tsp_ic = "MMS136";
+		info->pdata->tsp_tx = 19;
+		info->pdata->tsp_rx = 11;
+	}
 
 #if SEC_TSP_FACTORY_TEST
 	rx_num = info->pdata->tsp_rx;

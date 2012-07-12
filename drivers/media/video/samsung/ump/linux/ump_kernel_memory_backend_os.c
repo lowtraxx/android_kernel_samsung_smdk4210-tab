@@ -194,7 +194,7 @@ static int os_allocate(void* ctx, ump_dd_mem * descriptor)
 		MSG_ERR(("UMP memory allocated:%dkB left:%dkB\n"
 			"  Configured maximum OS memory usage:%dkB\n",
 			(pages_allocated * _MALI_OSK_CPU_PAGE_SIZE)/1024,
-			(left * _MALI_OSK_CPU_PAGE_SIZE)/1024,
+			left/1024,
 			(info->num_pages_max * _MALI_OSK_CPU_PAGE_SIZE)/1024));
 
 		while(pages_allocated)

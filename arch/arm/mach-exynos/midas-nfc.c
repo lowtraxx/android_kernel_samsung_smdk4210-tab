@@ -54,10 +54,11 @@ static int __init midas_nfc_init(void)
 {
 	int ret = 0;
 #if defined(CONFIG_MACH_C1) || defined(CONFIG_MACH_C1VZW) || \
-	defined(CONFIG_MACH_M3)	|| defined(CONFIG_MACH_M0_CTC)
+	defined(CONFIG_MACH_M0_CTC)
 #define I2C_BUSNUM_PN65N	(system_rev == 3 ? 0 : 5)
-#elif defined(CONFIG_MACH_M0) || \
-	defined(CONFIG_MACH_JENGA) || defined(CONFIG_MACH_S2PLUS)
+#elif defined(CONFIG_MACH_C2)
+#define I2C_BUSNUM_PN65N	12
+#elif defined(CONFIG_MACH_M0)
 #define I2C_BUSNUM_PN65N	(system_rev == 3 ? 12 : 5)
 #elif defined(CONFIG_MACH_T0)
 #define I2C_BUSNUM_PN65N	(system_rev == 0 ? 5 : 12)

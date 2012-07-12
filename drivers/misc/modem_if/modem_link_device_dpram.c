@@ -31,139 +31,6 @@
 #include "modem_link_device_dpram.h"
 #include "modem_utils.h"
 
-const inline char *get_dev_name(int dev)
-{
-	if (dev == IPC_FMT)
-		return "FMT";
-	else if (dev == IPC_RAW)
-		return "RAW";
-	else if (dev == IPC_RFS)
-		return "RFS";
-	else
-		return "NONE";
-}
-
-static int memcmp16_to_io(const void __iomem *to, void *from, int size)
-{
-	u16 *d = (u16 *)to;
-	u16 *s = (u16 *)from;
-	int count = size >> 1;
-	int diff = 0;
-	int i;
-	u16 d1;
-	u16 s1;
-
-	for (i = 0; i < count; i++) {
-		d1 = ioread16(d);
-		s1 = *s;
-		if (d1 != s1) {
-			diff++;
-			mif_info("ERR! [%d] d:0x%04X != s:0x%04X\n", i, d1, s1);
-		}
-		d++;
-		s++;
-	}
-
-	return diff;
-}
-
-static int test_dpram(char *dp_name, u8 __iomem *start, u32 size)
-{
-	u8 __iomem *dst;
-	int i;
-	u16 val;
-
-	mif_info("%s: start = 0x%p, size = %d\n", dp_name, start, size);
-
-	dst = start;
-	for (i = 0; i < (size >> 1); i++) {
-		iowrite16((i & 0xFFFF), dst);
-		dst += 2;
-	}
-
-	dst = start;
-	for (i = 0; i < (size >> 1); i++) {
-		val = ioread16(dst);
-		if (val != (i & 0xFFFF)) {
-			mif_info("%s: ERR! dst[%d] 0x%04X != 0x%04X\n",
-				dp_name, i, val, (i & 0xFFFF));
-			return -EINVAL;
-		}
-		dst += 2;
-	}
-
-	dst = start;
-	for (i = 0; i < (size >> 1); i++) {
-		iowrite16(0x00FF, dst);
-		dst += 2;
-	}
-
-	dst = start;
-	for (i = 0; i < (size >> 1); i++) {
-		val = ioread16(dst);
-		if (val != 0x00FF) {
-			mif_info("%s: ERR! dst[%d] 0x%04X != 0x00FF\n",
-				dp_name, i, val);
-			return -EINVAL;
-		}
-		dst += 2;
-	}
-
-	dst = start;
-	for (i = 0; i < (size >> 1); i++) {
-		iowrite16(0x0FF0, dst);
-		dst += 2;
-	}
-
-	dst = start;
-	for (i = 0; i < (size >> 1); i++) {
-		val = ioread16(dst);
-		if (val != 0x0FF0) {
-			mif_info("%s: ERR! dst[%d] 0x%04X != 0x0FF0\n",
-				dp_name, i, val);
-			return -EINVAL;
-		}
-		dst += 2;
-	}
-
-	dst = start;
-	for (i = 0; i < (size >> 1); i++) {
-		iowrite16(0xFF00, dst);
-		dst += 2;
-	}
-
-	dst = start;
-	for (i = 0; i < (size >> 1); i++) {
-		val = ioread16(dst);
-		if (val != 0xFF00) {
-			mif_info("%s: ERR! dst[%d] 0x%04X != 0xFF00\n",
-				dp_name, i, val);
-			return -EINVAL;
-		}
-		dst += 2;
-	}
-
-	dst = start;
-	for (i = 0; i < (size >> 1); i++) {
-		iowrite16(0, dst);
-		dst += 2;
-	}
-
-	dst = start;
-	for (i = 0; i < (size >> 1); i++) {
-		val = ioread16(dst);
-		if (val != 0) {
-			mif_info("%s: ERR! dst[%d] 0x%04X != 0\n",
-				dp_name, i, val);
-			return -EINVAL;
-		}
-		dst += 2;
-	}
-
-	mif_info("%s: PASS!!!\n", dp_name);
-	return 0;
-}
-
 static struct dpram_rxb *rxbq_create_pool(unsigned size, int count)
 {
 	struct dpram_rxb *rxb;
@@ -278,12 +145,6 @@ static int dpram_register_isr(unsigned irq, irqreturn_t (*isr)(int, void*),
 	mif_info("%s (#%d) handler registered\n", name, irq);
 
 	return 0;
-}
-
-static inline void dpram_reset(struct dpram_link_device *dpld)
-{
-	if (dpld->dpctl->reset)
-		dpld->dpctl->reset();
 }
 
 static inline void clear_intr(struct dpram_link_device *dpld)
@@ -470,8 +331,6 @@ static int dpram_wake_up(struct dpram_link_device *dpld)
 {
 	struct link_device *ld = &dpld->ld;
 
-	set_sromc_access(true);
-
 	if (!dpld->dpctl->wakeup)
 		return 0;
 
@@ -489,15 +348,12 @@ static void dpram_allow_sleep(struct dpram_link_device *dpld)
 {
 	struct link_device *ld = &dpld->ld;
 
-	if (!dpld->dpctl->sleep) {
-		set_sromc_access(false);
+	if (!dpld->dpctl->sleep)
 		return;
-	}
 
 	if (atomic_dec_return(&dpld->accessing) <= 0) {
 		dpld->dpctl->sleep();
 		atomic_set(&dpld->accessing, 0);
-		set_sromc_access(false);
 		mif_debug("%s: DPRAM sleep possible\n", ld->name);
 	}
 }
@@ -582,15 +438,32 @@ static inline int get_txq_space(struct dpram_link_device *dpld, int dev,
 	return (*in < *out) ? (*out - *in - 1) : (qsize + *out - *in - 1);
 }
 
+static void set_dpram_map(struct dpram_link_device *dpld,
+	struct mif_irq_map *map)
+{
+	map->magic = get_magic(dpld);
+	map->access = get_access(dpld);
+
+	map->fmt_tx_in = get_tx_head(dpld, IPC_FMT);
+	map->fmt_tx_out = get_tx_tail(dpld, IPC_FMT);
+	map->fmt_rx_in = get_rx_head(dpld, IPC_FMT);
+	map->fmt_rx_out = get_rx_tail(dpld, IPC_FMT);
+	map->raw_tx_in = get_tx_head(dpld, IPC_RAW);
+	map->raw_tx_out = get_tx_tail(dpld, IPC_RAW);
+	map->raw_rx_in = get_rx_head(dpld, IPC_RAW);
+	map->raw_rx_out = get_rx_tail(dpld, IPC_RAW);
+
+	map->cp2ap = recv_intr(dpld);
+}
+
 static void dpram_ipc_write(struct dpram_link_device *dpld, int dev,
 		u32 qsize, u32 in, u32 out, struct sk_buff *skb)
 {
 	struct link_device *ld = &dpld->ld;
-	struct io_device *iod = skbpriv(skb)->iod;
 	u8 __iomem *dst = get_tx_buff(dpld, dev);
 	u8 *src = skb->data;
 	u32 len = skb->len;
-	size_t dump_len = skb->len > 30 ? 30 : skb->len;
+	struct mif_irq_map map;
 
 	/* check queue status */
 	mif_debug("%s: {FMT %u %u %u %u} {RAW %u %u %u %u} ...\n", ld->name,
@@ -600,14 +473,18 @@ static void dpram_ipc_write(struct dpram_link_device *dpld, int dev,
 		get_rx_head(dpld, IPC_RAW), get_rx_tail(dpld, IPC_RAW));
 
 	if (dev == IPC_FMT) {
-		pr_ipc(__func__, skb->data, dump_len);
-		mif_info("[M:0x%X|A:%u] F[TI:%u TO:%u | RI:%u RO:%u] "
+		set_dpram_map(dpld, &map);
+		mif_irq_log(ld->mc->msd, map, "ipc_write", sizeof("ipc_write"));
+		mif_ipc_log(MIF_IPC_AP2CP, ld->mc->msd, skb->data, skb->len);
+
+		mif_info("%s: [M:0x%X|A:%u] F[TI:%u TO:%u | RI:%u RO:%u] "
 			"R[TI:%u TO:%u | RI:%u RO:%u]\n",
-			get_magic(dpld), get_access(dpld),
+			ld->name, get_magic(dpld), get_access(dpld),
 			get_tx_head(dpld, IPC_FMT), get_tx_tail(dpld, IPC_FMT),
 			get_rx_head(dpld, IPC_FMT), get_rx_tail(dpld, IPC_FMT),
 			get_tx_head(dpld, IPC_RAW), get_tx_tail(dpld, IPC_RAW),
 			get_rx_head(dpld, IPC_RAW), get_rx_tail(dpld, IPC_RAW));
+		pr_ipc(__func__, src, (len > 16 ? 16 : len));
 	}
 
 	if (in < out) {
@@ -643,7 +520,6 @@ static int dpram_try_ipc_tx(struct dpram_link_device *dpld, int dev)
 	int space;
 	int copied = 0;
 	u16 mask = 0;
-	unsigned long int flags;
 
 	while (1) {
 		skb = skb_dequeue(txq);
@@ -674,9 +550,7 @@ static int dpram_try_ipc_tx(struct dpram_link_device *dpld, int dev)
 			ld->name, get_dev_name(dev),
 			qsize, in, out, space, skb->len);
 
-		spin_lock_irqsave(&dpld->tx_lock, flags);
 		dpram_ipc_write(dpld, dev, qsize, in, out, skb);
-		spin_unlock_irqrestore(&dpld->tx_lock, flags);
 
 		copied += skb->len;
 
@@ -758,9 +632,12 @@ static void dpram_ipc_rx_task(unsigned long data)
 			iod = link_get_iod_with_format(ld, i);
 
 		qlen = rxbq_size(&dpld->rxbq[i]);
-		if (qlen > 0 && iod->format == IPC_FMT)
-			mif_info("[M:0x%X|A:%u] F[TI:%u TO:%u | RI:%u RO:%u] "
+
+		if (qlen > 0 && i == IPC_FMT) {
+			mif_info("%s: [M:0x%X|A:%u] "
+				"F[TI:%u TO:%u | RI:%u RO:%u] "
 				"R[TI:%u TO:%u | RI:%u RO:%u]\n",
+				ld->name,
 				dpld->logbuff.magic, dpld->logbuff.access,
 				dpld->logbuff.fmt_tx_in,
 				dpld->logbuff.fmt_tx_out,
@@ -770,6 +647,7 @@ static void dpram_ipc_rx_task(unsigned long data)
 				dpld->logbuff.raw_tx_out,
 				dpld->logbuff.raw_rx_in,
 				dpld->logbuff.raw_rx_out);
+		}
 
 		while (qlen > 0) {
 			rxb = rxbq_get_data_rxb(&dpld->rxbq[i]);
@@ -863,11 +741,15 @@ static int dpram_ipc_recv_data(struct dpram_link_device *dpld, int dev,
 	u32 in = get_rx_head(dpld, dev);
 	u32 out = get_rx_tail(dpld, dev);
 	u32 rcvd = 0;
+	struct mif_irq_map map;
 
 	if (in == out)
 		return 0;
 
 	if (dev == IPC_FMT) {
+		set_dpram_map(dpld, &map);
+		mif_irq_log(ld->mc->msd, map, "ipc_recv", sizeof("ipc_recv"));
+
 		dpld->logbuff.magic = get_magic(dpld);
 		dpld->logbuff.access = get_access(dpld);
 
@@ -1007,8 +889,10 @@ static int dpram_init_ipc(struct dpram_link_device *dpld)
 
 	ld->mode = LINK_MODE_IPC;
 
-	for (i = 0; i < dpld->max_ipc_dev; i++)
+	for (i = 0; i < dpld->max_ipc_dev; i++) {
+		spin_lock_init(&dpld->tx_lock[i]);
 		atomic_set(&dpld->res_required[i], 0);
+	}
 
 	atomic_set(&dpld->accessing, 0);
 
@@ -1046,11 +930,8 @@ static void cmd_crash_exit_handler(struct dpram_link_device *dpld)
 
 	complete_all(&dpld->crash_start_complete);
 
-	if (ld->mdm_data->modem_type == QC_MDM6600 ||
-	    ld->mdm_data->modem_type == QC_ESC6270) {
-		if (dpld->dpctl->log_disp)
-			dpld->dpctl->log_disp(dpld->dpctl);
-	}
+	if (dpld->ext_op && dpld->ext_op->log_disp)
+		dpld->ext_op->log_disp(dpld);
 
 	dpram_trigger_crash(dpld);
 }
@@ -1070,16 +951,13 @@ static void cmd_phone_start_handler(struct dpram_link_device *dpld)
 		return;
 	}
 
-	if (ld->mdm_data->modem_type == SEC_CMC221) {
-		if (ld->mc->phone_state != STATE_ONLINE) {
-			mif_info("%s: phone_state: %d -> ONLINE\n",
-				ld->name, ld->mc->phone_state);
-			iod->modem_state_changed(iod, STATE_ONLINE);
-		}
-	} else if (ld->mdm_data->modem_type == QC_MDM6600 ||
-		   ld->mdm_data->modem_type == QC_ESC6270) {
-		if (dpld->dpctl->phone_boot_start_handler)
-			dpld->dpctl->phone_boot_start_handler(dpld->dpctl);
+	if (dpld->ext_op && dpld->ext_op->cp_start_handler)
+		dpld->ext_op->cp_start_handler(dpld);
+
+	if (ld->mc->phone_state != STATE_ONLINE) {
+		mif_info("%s: phone_state: %d -> ONLINE\n",
+			ld->name, ld->mc->phone_state);
+		iod->modem_state_changed(iod, STATE_ONLINE);
 	}
 
 	mif_info("%s: Send 0xC2 (INIT_END)\n", ld->name);
@@ -1174,403 +1052,7 @@ static void ext_command_handler(struct dpram_link_device *dpld, u16 cmd)
 	}
 }
 
-static int cmc22x_idpram_wait_response(struct dpram_link_device *dpld, u32 resp)
-{
-	struct link_device *ld = &dpld->ld;
-	int count = 50000;
-	u32 rcvd = 0;
-
-	if (resp == CMC22x_CP_REQ_NV_DATA) {
-		while (1) {
-			rcvd = ioread32(dpld->bt_map.resp);
-			if (rcvd == resp)
-				break;
-
-			rcvd = dpld->dpctl->recv_msg();
-			if (rcvd == 0x9999) {
-				mif_info("%s: Invalid resp 0x%04X\n",
-					ld->name, rcvd);
-				panic("CP Crash ... BAD CRC in CP");
-			}
-
-			if (count-- < 0) {
-				mif_info("%s: Invalid resp 0x%08X\n",
-					ld->name, rcvd);
-				return -EAGAIN;
-			}
-
-			udelay(100);
-		}
-	} else {
-		while (1) {
-			rcvd = dpld->dpctl->recv_msg();
-
-			if (rcvd == resp)
-				break;
-
-			if (resp == CMC22x_CP_RECV_NV_END &&
-			    rcvd == CMC22x_CP_CAL_BAD) {
-				mif_info("%s: CMC22x_CP_CAL_BAD\n", ld->name);
-				break;
-			}
-
-			if (count-- < 0) {
-				mif_info("%s: Invalid resp 0x%04X\n",
-					ld->name, rcvd);
-				return -EAGAIN;
-			}
-
-			udelay(100);
-		}
-	}
-
-	return rcvd;
-}
-
-static int cmc22x_idpram_send_boot(struct link_device *ld, unsigned long arg)
-{
-	struct dpram_link_device *dpld = to_dpram_link_device(ld);
-	u8 __iomem *bt_buff = dpld->bt_map.buff;
-	struct dpram_boot_img cp_img;
-	u8 *img_buff = NULL;
-	int err = 0;
-	int cnt = 0;
-
-	ld->mode = LINK_MODE_BOOT;
-
-	dpld->dpctl->setup_speed(DPRAM_SPEED_LOW);
-
-	/* Test memory... After testing, memory is cleared. */
-	if (test_dpram(ld->name, bt_buff, dpld->bt_map.size) < 0) {
-		mif_info("%s: ERR! test_dpram fail!\n", ld->name);
-		ld->mode = LINK_MODE_INVALID;
-		return -EIO;
-	}
-
-	memset(&cp_img, 0, sizeof(struct dpram_boot_img));
-
-	/* Get information about the boot image */
-	err = copy_from_user(&cp_img, (void *)arg, sizeof(cp_img));
-	mif_info("%s: CP image addr = 0x%08X, size = %d\n",
-		ld->name, (int)cp_img.addr, cp_img.size);
-
-	/* Alloc a buffer for the boot image */
-	img_buff = kzalloc(dpld->bt_map.size, GFP_KERNEL);
-	if (!img_buff) {
-		mif_info("%s: ERR! kzalloc fail\n", ld->name);
-		ld->mode = LINK_MODE_INVALID;
-		return -ENOMEM;
-	}
-
-	/* Copy boot image from the user space to the image buffer */
-	err = copy_from_user(img_buff, cp_img.addr, cp_img.size);
-
-	/* Copy boot image to DPRAM and verify it */
-	memcpy(bt_buff, img_buff, cp_img.size);
-	if (memcmp16_to_io(bt_buff, img_buff, cp_img.size)) {
-		mif_info("%s: ERR! Boot may be broken!!!\n", ld->name);
-		goto err;
-	}
-
-	dpram_reset(dpld);
-	udelay(1000);
-
-	if (cp_img.mode == CMC22x_BOOT_MODE_NORMAL) {
-		mif_info("%s: CMC22x_BOOT_MODE_NORMAL\n", ld->name);
-		mif_info("%s: Send req 0x%08X\n", ld->name, cp_img.req);
-		iowrite32(cp_img.req, dpld->bt_map.req);
-
-		/* Wait for cp_img.resp for 1 second */
-		mif_info("%s: Wait resp 0x%08X\n", ld->name, cp_img.resp);
-		while (ioread32(dpld->bt_map.resp) != cp_img.resp) {
-			cnt++;
-			msleep_interruptible(10);
-			if (cnt > 100) {
-				mif_info("%s: ERR! Invalid resp 0x%08X\n",
-					ld->name, ioread32(dpld->bt_map.resp));
-				goto err;
-			}
-		}
-	} else {
-		mif_info("%s: CMC22x_BOOT_MODE_DUMP\n", ld->name);
-	}
-
-	kfree(img_buff);
-
-	mif_info("%s: Send BOOT done\n", ld->name);
-
-	if (dpld->dpctl->setup_speed)
-		dpld->dpctl->setup_speed(DPRAM_SPEED_HIGH);
-
-	return 0;
-
-err:
-	ld->mode = LINK_MODE_INVALID;
-	kfree(img_buff);
-
-	mif_info("%s: ERR! Boot send fail!!!\n", ld->name);
-	return -EIO;
-}
-
-static int cmc22x_idpram_send_main(struct link_device *ld, struct sk_buff *skb)
-{
-	int err = 0;
-	int ret = 0;
-	struct dpram_link_device *dpld = to_dpram_link_device(ld);
-	struct dpram_boot_frame *bf = (struct dpram_boot_frame *)skb->data;
-	u8 __iomem *buff = (dpld->bt_map.buff + bf->offset);
-
-	if ((bf->offset + bf->len) > dpld->bt_map.size) {
-		mif_info("%s: ERR! Out of DPRAM boundary\n", ld->name);
-		err = -EINVAL;
-		goto exit;
-	}
-
-	if (bf->len)
-		memcpy(buff, bf->data, bf->len);
-
-	if (bf->request)
-		dpld->dpctl->send_msg((u16)bf->request);
-
-	if (bf->response) {
-		err = cmc22x_idpram_wait_response(dpld, bf->response);
-		if (err < 0)
-			mif_info("%s: ERR! wait_response fail (err %d)\n",
-				ld->name, err);
-	}
-
-	if (bf->request == CMC22x_CAL_NV_DOWN_END)
-		mif_info("%s: CMC22x_CAL_NV_DOWN_END\n", ld->name);
-
-exit:
-	if (err < 0)
-		ret = err;
-	else
-		ret = skb->len;
-
-	dev_kfree_skb_any(skb);
-
-	return ret;
-}
-
-static void cmc22x_idpram_wait_dump(unsigned long arg)
-{
-	struct dpram_link_device *dpld = (struct dpram_link_device *)arg;
-	u16 msg;
-
-	if (!dpld) {
-		mif_info("ERR! dpld == NULL\n");
-		return;
-	}
-
-	msg = dpld->dpctl->recv_msg();
-
-	if (msg == CMC22x_CP_DUMP_END) {
-		complete_all(&dpld->dump_recv_done);
-		return;
-	}
-
-	if (((dpld->dump_rcvd & 0x1) == 0) && (msg == CMC22x_1ST_BUFF_FULL)) {
-		complete_all(&dpld->dump_recv_done);
-		return;
-	}
-
-	if (((dpld->dump_rcvd & 0x1) == 1) && (msg == CMC22x_2ND_BUFF_FULL)) {
-		complete_all(&dpld->dump_recv_done);
-		return;
-	}
-
-	mif_add_timer(&dpld->dump_timer, CMC22x_DUMP_WAIT_TIMEOVER,
-		cmc22x_idpram_wait_dump, (unsigned long)dpld);
-}
-
-static int cmc22x_idpram_upload(struct dpram_link_device *dpld,
-		struct dpram_dump_arg *dumparg)
-{
-	struct link_device *ld = &dpld->ld;
-	int ret;
-	u8 __iomem *src;
-	int buff_size = CMC22x_DUMP_BUFF_SIZE;
-
-	if ((dpld->dump_rcvd & 0x1) == 0)
-		dpld->dpctl->send_msg(CMC22x_1ST_BUFF_READY);
-	else
-		dpld->dpctl->send_msg(CMC22x_2ND_BUFF_READY);
-
-	init_completion(&dpld->dump_recv_done);
-
-	mif_add_timer(&dpld->dump_timer, CMC22x_DUMP_WAIT_TIMEOVER,
-		cmc22x_idpram_wait_dump, (unsigned long)dpld);
-
-	ret = wait_for_completion_interruptible_timeout(
-			&dpld->dump_recv_done, DUMP_TIMEOUT);
-	if (!ret) {
-		mif_info("%s: ERR! CP didn't send dump data!!!\n", ld->name);
-		goto err_out;
-	}
-
-	if (dpld->dpctl->recv_msg() == CMC22x_CP_DUMP_END) {
-		mif_info("%s: CMC22x_CP_DUMP_END\n", ld->name);
-		return 0;
-	}
-
-	if ((dpld->dump_rcvd & 0x1) == 0)
-		src = dpld->ul_map.buff;
-	else
-		src = dpld->ul_map.buff + CMC22x_DUMP_BUFF_SIZE;
-
-	memcpy(dpld->buff, src, buff_size);
-
-	ret = copy_to_user(dumparg->buff, dpld->buff, buff_size);
-	if (ret < 0) {
-		mif_info("%s: ERR! copy_to_user fail\n", ld->name);
-		goto err_out;
-	}
-
-	dpld->dump_rcvd++;
-	return buff_size;
-
-err_out:
-	return -EIO;
-}
-
-static int cbp72_edpram_wait_response(struct dpram_link_device *dpld, u32 resp)
-{
-	struct link_device *ld = &dpld->ld;
-	int ret;
-	int int2cp;
-
-	ret = wait_for_completion_interruptible_timeout(
-			&dpld->udl_cmd_complete, UDL_TIMEOUT);
-	if (!ret) {
-		mif_info("%s: ERR! No UDL_CMD_RESP!!!\n", ld->name);
-		return -ENXIO;
-	}
-
-	int2cp = recv_intr(dpld);
-	mif_debug("%s: int2cp = 0x%x\n", ld->name, int2cp);
-	if (resp == int2cp || int2cp == 0xA700)
-		return int2cp;
-	else
-		return -EINVAL;
-}
-
-static int cbp72_edpram_send_bin(struct link_device *ld, struct sk_buff *skb)
-{
-	struct dpram_link_device *dpld = to_dpram_link_device(ld);
-	struct dpram_boot_frame *bf = (struct dpram_boot_frame *)skb->data;
-	u8 __iomem *buff = dpld->bt_map.buff;
-	int err = 0;
-
-	if (bf->len > dpld->bt_map.size) {
-		mif_info("%s: ERR! Out of DPRAM boundary\n", ld->name);
-		err = -EINVAL;
-		goto exit;
-	}
-
-	if (bf->len)
-		memcpy(buff, bf->data, bf->len);
-
-	init_completion(&dpld->udl_cmd_complete);
-
-	if (bf->request)
-		send_intr(dpld, (u16)bf->request);
-
-	if (bf->response) {
-		err = cbp72_edpram_wait_response(dpld, bf->response);
-		if (err < 0) {
-			mif_info("%s: ERR! wait_response fail (%d)\n",
-				ld->name, err);
-			goto exit;
-		} else if (err == bf->response) {
-			err = skb->len;
-		}
-	}
-
-exit:
-	dev_kfree_skb_any(skb);
-	return err;
-}
-
-static int dpram_upload(struct dpram_link_device *dpld,
-		struct dpram_dump_arg *dump, unsigned char __user *target)
-{
-	struct link_device *ld = &dpld->ld;
-	struct ul_header header;
-	u8 *dest = NULL;
-	u8 *buff = NULL;
-	u16 plen = 0;
-	int err = 0;
-	int ret = 0;
-	int buff_size = 0;
-
-	mif_info("\n");
-
-	init_completion(&dpld->udl_cmd_complete);
-
-	mif_info("%s: req %x, resp %x", ld->name, dump->req, dump->resp);
-
-	if (dump->req)
-		send_intr(dpld, (u16)dump->req);
-
-	if (dump->resp) {
-		err = cbp72_edpram_wait_response(dpld, dump->resp);
-		if (err < 0) {
-			mif_info("%s: ERR! wait_response fail (%d)\n",
-				ld->name, err);
-			goto exit;
-		}
-	}
-
-	if (dump->cmd)
-		return err;
-
-	dest = (u8 *)dpld->ul_map.buff;
-
-	header.bop = *(u8 *)(dest);
-	header.total_frame = *(u16 *)(dest + 1);
-	header.curr_frame = *(u16 *)(dest + 3);
-	header.len = *(u16 *)(dest + 5);
-
-	mif_info("%s: total frame:%d, current frame:%d, data len:%d\n",
-		ld->name, header.total_frame, header.curr_frame, header.len);
-
-	plen = min_t(u16, header.len, DP_DEFAULT_DUMP_LEN);
-
-	buff = vmalloc(DP_DEFAULT_DUMP_LEN);
-	if (!buff) {
-		err = -ENOMEM;
-		goto exit;
-	}
-
-	memcpy(buff, dest + sizeof(struct ul_header), plen);
-	ret = copy_to_user(dump->buff, buff, plen);
-	if (ret < 0) {
-		mif_info("%s: copy_to_user fail\n", ld->name);
-		err = -EIO;
-		goto exit;
-	}
-	buff_size = plen;
-
-	ret = copy_to_user(target + 4, &buff_size, sizeof(int));
-	if (ret < 0) {
-		mif_info("%s: copy_to_user fail\n", ld->name);
-		err = -EIO;
-		goto exit;
-	}
-
-	vfree(buff);
-	return err;
-
-exit:
-	if (buff)
-		vfree(buff);
-	iowrite32(0, dpld->ul_map.magic);
-	wake_unlock(&dpld->wlock);
-	return err;
-}
-
-static void udl_cmd_handler(struct dpram_link_device *dpld, u16 cmd)
+static void udl_command_handler(struct dpram_link_device *dpld, u16 cmd)
 {
 	struct link_device *ld = &dpld->ld;
 
@@ -1608,20 +1090,15 @@ static irqreturn_t dpram_irq_handler(int irq, void *data)
 	if (int2ap == INT_POWERSAFE_FAIL) {
 		mif_info("%s: int2ap == INT_POWERSAFE_FAIL\n", ld->name);
 		goto exit_isr;
-	}
-
-	if (ld->mdm_data->modem_type == QC_MDM6600 ||
-	    ld->mdm_data->modem_type == QC_ESC6270) {
-		if ((int2ap == 0x1234)|(int2ap == 0xDBAB)|(int2ap == 0xABCD)) {
-			if (dpld->dpctl->dload_cmd_hdlr)
-				dpld->dpctl->dload_cmd_hdlr(dpld->dpctl,
-									int2ap);
+	} else if (int2ap == 0x1234 || int2ap == 0xDBAB || int2ap == 0xABCD) {
+		if (dpld->ext_op && dpld->ext_op->dload_cmd_handler) {
+			dpld->ext_op->dload_cmd_handler(dpld, int2ap);
 			goto exit_isr;
 		}
 	}
 
 	if (UDL_CMD_VALID(int2ap))
-		udl_cmd_handler(dpld, int2ap);
+		udl_command_handler(dpld, int2ap);
 	else if (EXT_INT_VALID(int2ap) && EXT_CMD_VALID(int2ap))
 		ext_command_handler(dpld, int2ap);
 	else if (INT_CMD_VALID(int2ap))
@@ -1636,12 +1113,23 @@ exit_isr:
 	return IRQ_HANDLED;
 }
 
-static void dpram_send_ipc(struct link_device *ld, int dev, struct sk_buff *skb)
+static void dpram_send_ipc(struct link_device *ld, int dev,
+			struct io_device *iod, struct sk_buff *skb)
 {
 	struct dpram_link_device *dpld = to_dpram_link_device(ld);
 	struct sk_buff_head *txq;
+	unsigned long int flags;
 	int ret;
 	u16 mask;
+
+	if (iod->io_typ == IODEV_NET) {
+		u8 *pkt = skb->data + get_sipc5_hdr_size(skb->data);
+		if (unlikely(is_dns_packet(pkt))) {
+			u8 str[64];
+			snprintf(str, 64, "%s: %s: DNS", __func__, ld->name);
+			pr_ipc(str, pkt, 20);
+		}
+	}
 
 	if (unlikely(dev >= dpld->max_ipc_dev)) {
 		mif_info("%s: ERR! dev %d >= max_ipc_dev(%s)\n",
@@ -1649,8 +1137,10 @@ static void dpram_send_ipc(struct link_device *ld, int dev, struct sk_buff *skb)
 		return;
 	}
 
-	if (dpram_wake_up(dpld) < 0)
+	if (dpram_wake_up(dpld) < 0) {
+		dpram_trigger_force_cp_crash(dpld);
 		return;
+	}
 
 	if (!dpram_ipc_active(dpld))
 		goto exit;
@@ -1668,6 +1158,7 @@ static void dpram_send_ipc(struct link_device *ld, int dev, struct sk_buff *skb)
 		goto exit;
 	}
 
+	spin_lock_irqsave(&dpld->tx_lock[dev], flags);
 	ret = dpram_try_ipc_tx(dpld, dev);
 	if (ret > 0) {
 		mask = get_mask_send(dpld, dev);
@@ -1677,6 +1168,7 @@ static void dpram_send_ipc(struct link_device *ld, int dev, struct sk_buff *skb)
 		send_intr(dpld, INT_NON_CMD(mask));
 		mif_info("%s: Send REQ_ACK 0x%04X\n", ld->name, mask);
 	}
+	spin_unlock_irqrestore(&dpld->tx_lock[dev], flags);
 
 exit:
 	dpram_allow_sleep(dpld);
@@ -1684,10 +1176,10 @@ exit:
 
 static int dpram_send_binary(struct link_device *ld, struct sk_buff *skb)
 {
-	if (ld->mdm_data->modem_type == SEC_CMC221)
-		return cmc22x_idpram_send_main(ld, skb);
-	else if (ld->mdm_data->modem_type == VIA_CBP72)
-		return cbp72_edpram_send_bin(ld, skb);
+	struct dpram_link_device *dpld = to_dpram_link_device(ld);
+
+	if (dpld->ext_op && dpld->ext_op->download_skb)
+		return dpld->ext_op->download_skb(dpld, skb);
 	else
 		return -ENODEV;
 }
@@ -1702,8 +1194,12 @@ static int dpram_send(struct link_device *ld, struct io_device *iod,
 	case IPC_FMT:
 	case IPC_RAW:
 	case IPC_RFS:
-		if (likely(ld->mc->phone_state == STATE_ONLINE))
-			dpram_send_ipc(ld, fmt, skb);
+		if (likely(ld->mc->phone_state == STATE_ONLINE)) {
+			dpram_send_ipc(ld, fmt, iod, skb);
+		} else {
+			mif_info("%s: phone_state != STATE_ONLINE\n", ld->name);
+			dev_kfree_skb_any(skb);
+		}
 		return len;
 
 	case IPC_BOOT:
@@ -1716,7 +1212,7 @@ static int dpram_send(struct link_device *ld, struct io_device *iod,
 	}
 }
 
-static int dpram_set_dl_magic(struct link_device *ld, struct io_device *iod)
+static int dpram_set_dload_magic(struct link_device *ld, struct io_device *iod)
 {
 	struct dpram_link_device *dpld = to_dpram_link_device(ld);
 
@@ -1734,7 +1230,7 @@ static int dpram_force_dump(struct link_device *ld, struct io_device *iod)
 	return 0;
 }
 
-static void dpram_dump(struct link_device *ld, char *buff)
+static void dpram_dump_memory(struct link_device *ld, char *buff)
 {
 	struct dpram_link_device *dpld = to_dpram_link_device(ld);
 	u8 __iomem *base = dpld->dpctl->dp_base;
@@ -1747,52 +1243,25 @@ static void dpram_dump(struct link_device *ld, char *buff)
 static int dpram_dump_start(struct link_device *ld, struct io_device *iod)
 {
 	struct dpram_link_device *dpld = to_dpram_link_device(ld);
-	u8 *dest = dpld->ul_map.buff;
-	int ret;
 
-	ld->mode = LINK_MODE_ULOAD;
-
-	ret = del_timer(&dpld->dump_timer);
-	wake_lock(&dpld->wlock);
-
-	if (ld->mdm_data->modem_type == SEC_CMC221) {
-		dpld->dump_rcvd = 0;
-		iowrite32(CMC22x_CP_DUMP_MAGIC, dpld->ul_map.magic);
-	} else {
-		iowrite32(DP_MAGIC_UMDL, dpld->ul_map.magic);
-
-		iowrite8((u8)START_INDEX, dest + 0);
-		iowrite8((u8)0x1, dest + 1);
-		iowrite8((u8)0x1, dest + 2);
-		iowrite8((u8)0x0, dest + 3);
-		iowrite8((u8)END_INDEX, dest + 4);
-	}
-
-	init_completion(&dpld->dump_start_complete);
-
-	return 0;
+	if (dpld->ext_op && dpld->ext_op->dump_start)
+		return dpld->ext_op->dump_start(dpld);
+	else
+		return -ENODEV;
 }
 
 static int dpram_dump_update(struct link_device *ld, struct io_device *iod,
 		unsigned long arg)
 {
 	struct dpram_link_device *dpld = to_dpram_link_device(ld);
-	struct dpram_dump_arg dump;
-	int ret;
 
-	ret = copy_from_user(&dump, (void __user *)arg, sizeof(dump));
-	if (ret  < 0) {
-		mif_info("%s: ERR! copy_from_user fail\n", ld->name);
-		return ret;
-	}
-
-	if (ld->mdm_data->modem_type == SEC_CMC221)
-		return cmc22x_idpram_upload(dpld, &dump);
+	if (dpld->ext_op && dpld->ext_op->dump_update)
+		return dpld->ext_op->dump_update(dpld, (void *)arg);
 	else
-		return dpram_upload(dpld, &dump, (unsigned char __user *)arg);
+		return -ENODEV;
 }
 
-static int dpram_link_ioctl(struct link_device *ld, struct io_device *iod,
+static int dpram_ioctl(struct link_device *ld, struct io_device *iod,
 		unsigned int cmd, unsigned long arg)
 {
 	int err = -EFAULT;
@@ -1802,18 +1271,21 @@ static int dpram_link_ioctl(struct link_device *ld, struct io_device *iod,
 
 	switch (cmd) {
 	case IOCTL_DPRAM_SEND_BOOT:
-		err = cmc22x_idpram_send_boot(ld, arg);
-		if (err < 0) {
-			mif_info("%s: ERR! dpram_send_boot fail\n", ld->name);
-			goto exit;
+		if (dpld->ext_op && dpld->ext_op->download_boot) {
+			err = dpld->ext_op->download_boot(dpld, (void *)arg);
+			if (err < 0) {
+				mif_info("%s: ERR! download_boot fail\n",
+					ld->name);
+				goto exit;
+			}
 		}
 		break;
 
 	case IOCTL_DPRAM_PHONE_POWON:
-		if (dpld->dpctl->cpimage_load_prepare) {
-			err = dpld->dpctl->cpimage_load_prepare(dpld->dpctl);
+		if (dpld->ext_op && dpld->ext_op->prepare_download) {
+			err = dpld->ext_op->prepare_download(dpld);
 			if (err < 0) {
-				mif_info("%s: ERR! cpimage_load_prepare fail\n",
+				mif_info("%s: ERR! prepare_download fail\n",
 					ld->name);
 				goto exit;
 			}
@@ -1821,11 +1293,10 @@ static int dpram_link_ioctl(struct link_device *ld, struct io_device *iod,
 		break;
 
 	case IOCTL_DPRAM_PHONEIMG_LOAD:
-		if (dpld->dpctl->cpimage_load) {
-			err = dpld->dpctl->cpimage_load(
-					(void *)arg, dpld->dpctl);
+		if (dpld->ext_op && dpld->ext_op->download_bin) {
+			err = dpld->ext_op->download_bin(dpld, (void *)arg);
 			if (err < 0) {
-				mif_info("%s: ERR! cpimage_load fail\n",
+				mif_info("%s: ERR! download_bin fail\n",
 					ld->name);
 				goto exit;
 			}
@@ -1833,11 +1304,10 @@ static int dpram_link_ioctl(struct link_device *ld, struct io_device *iod,
 		break;
 
 	case IOCTL_DPRAM_NVDATA_LOAD:
-		if (dpld->dpctl->nvdata_load) {
-			err = dpld->dpctl->nvdata_load(
-					(void *)arg, dpld->dpctl);
+		if (dpld->ext_op && dpld->ext_op->download_nv) {
+			err = dpld->ext_op->download_nv(dpld, (void *)arg);
 			if (err < 0) {
-				mif_info("%s: ERR! nvdata_load fail\n",
+				mif_info("%s: ERR! download_nv fail\n",
 					ld->name);
 				goto exit;
 			}
@@ -1845,19 +1315,18 @@ static int dpram_link_ioctl(struct link_device *ld, struct io_device *iod,
 		break;
 
 	case IOCTL_DPRAM_PHONE_BOOTSTART:
-		if (dpld->dpctl->phone_boot_start) {
-			err = dpld->dpctl->phone_boot_start(dpld->dpctl);
+		if (dpld->ext_op && dpld->ext_op->cp_boot_start) {
+			err = dpld->ext_op->cp_boot_start(dpld);
 			if (err < 0) {
-				mif_info("%s: ERR! phone_boot_start fail\n",
+				mif_info("%s: ERR! cp_boot_start fail\n",
 					ld->name);
 				goto exit;
 			}
 		}
-		if (dpld->dpctl->phone_boot_start_post_process) {
-			err = dpld->dpctl->phone_boot_start_post_process();
+		if (dpld->ext_op && dpld->ext_op->cp_boot_post_process) {
+			err = dpld->ext_op->cp_boot_post_process(dpld);
 			if (err < 0) {
-				mif_info("%s: ERR! "
-					"phone_boot_start_post_process fail\n",
+				mif_info("%s: ERR! cp_boot_post_process fail\n",
 					ld->name);
 				goto exit;
 			}
@@ -1867,12 +1336,12 @@ static int dpram_link_ioctl(struct link_device *ld, struct io_device *iod,
 	case IOCTL_DPRAM_PHONE_UPLOAD_STEP1:
 		disable_irq_nosync(dpld->irq);
 
-		if (dpld->dpctl->cpupload_step1) {
-			err = dpld->dpctl->cpupload_step1(dpld->dpctl);
+		if (dpld->ext_op && dpld->ext_op->upload_step1) {
+			err = dpld->ext_op->upload_step1(dpld);
 			if (err < 0) {
 				clear_intr(dpld);
 				enable_irq(dpld->irq);
-				mif_info("%s: ERR! cpupload_step1 fail\n",
+				mif_info("%s: ERR! upload_step1 fail\n",
 					ld->name);
 				goto exit;
 			}
@@ -1880,13 +1349,12 @@ static int dpram_link_ioctl(struct link_device *ld, struct io_device *iod,
 		break;
 
 	case IOCTL_DPRAM_PHONE_UPLOAD_STEP2:
-		if (dpld->dpctl->cpupload_step2) {
-			err = dpld->dpctl->cpupload_step2(
-					(void *)arg, dpld->dpctl);
+		if (dpld->ext_op->upload_step2) {
+			err = dpld->ext_op->upload_step2(dpld, (void *)arg);
 			if (err < 0) {
 				clear_intr(dpld);
 				enable_irq(dpld->irq);
-				mif_info("%s: ERR! cpupload_step2 fail\n",
+				mif_info("%s: ERR! upload_step2 fail\n",
 					ld->name);
 				goto exit;
 			}
@@ -1898,9 +1366,9 @@ static int dpram_link_ioctl(struct link_device *ld, struct io_device *iod,
 		return dpld->dpram_init_status;
 
 	case IOCTL_MODEM_DL_START:
-		err = dpram_set_dl_magic(ld, iod);
+		err = dpram_set_dload_magic(ld, iod);
 		if (err < 0) {
-			mif_info("%s: ERR! dpram_set_dl_magic fail\n",
+			mif_info("%s: ERR! dpram_set_dload_magic fail\n",
 				ld->name);
 			goto exit;
 		}
@@ -2002,54 +1470,68 @@ static int dpram_table_init(struct dpram_link_device *dpld)
 	dpld->mbx2cp = dpld->ipc_map.mbx_ap2cp;
 
 	/* Map for booting */
-	if (ld->mdm_data->modem_type == SEC_CMC221) {
-		dpld->bt_map.buff = (u8 *)(dp_base);
-		dpld->bt_map.req  = (u32 *)(dp_base + DP_BOOT_REQ_OFFSET);
-		dpld->bt_map.resp = (u32 *)(dp_base + DP_BOOT_RESP_OFFSET);
-		dpld->bt_map.size = dpld->dp_size;
-	} else if (ld->mdm_data->modem_type == QC_MDM6600 ||
-		   ld->mdm_data->modem_type == QC_ESC6270) {
-		if (dpld->dpctl->bt_map_init)
-			dpld->dpctl->bt_map_init(dpld->dpctl);
-	} else if (ld->mdm_data->modem_type == VIA_CBP72) {
+	if (dpld->ext_op && dpld->ext_op->init_boot_map) {
+		dpld->ext_op->init_boot_map(dpld);
+	} else {
 		dpld->bt_map.magic = (u32 *)(dp_base);
 		dpld->bt_map.buff = (u8 *)(dp_base + DP_BOOT_BUFF_OFFSET);
-		dpld->bt_map.size = dpld->dp_size - 4;
-	} else {
-		dpld->bt_map.buff = (u8 *)(dp_base);
-		dpld->bt_map.req  = (u32 *)(dp_base + DP_BOOT_REQ_OFFSET);
-		dpld->bt_map.resp = (u32 *)(dp_base + DP_BOOT_RESP_OFFSET);
-		dpld->bt_map.size = dpld->dp_size - 4;
+		dpld->bt_map.size = dpld->dp_size - 8;
 	}
 
 	/* Map for download (FOTA, UDL, etc.) */
-	if (ld->mdm_data->modem_type == SEC_CMC221 ||
-			ld->mdm_data->modem_type == VIA_CBP72) {
+	if (dpld->ext_op && dpld->ext_op->init_dl_map) {
+		dpld->ext_op->init_dl_map(dpld);
+	} else {
 		dpld->dl_map.magic = (u32 *)(dp_base);
-		dpld->dl_map.buff  = (u8 *)(dp_base + DP_DLOAD_BUFF_OFFSET);
+		dpld->dl_map.buff = (u8 *)(dp_base + DP_DLOAD_BUFF_OFFSET);
 	}
 
 	/* Map for upload mode */
-	dpld->ul_map.magic = (u32 *)(dp_base);
-	if (ld->mdm_data->modem_type == SEC_CMC221)
-		dpld->ul_map.buff = (u8 *)(dp_base);
-	else
+	if (dpld->ext_op && dpld->ext_op->init_ul_map) {
+		dpld->ext_op->init_ul_map(dpld);
+	} else {
+		dpld->ul_map.magic = (u32 *)(dp_base);
 		dpld->ul_map.buff = (u8 *)(dp_base + DP_ULOAD_BUFF_OFFSET);
+	}
 
 	return 0;
 }
 
-#if defined(CONFIG_MACH_M0_CTC)
+static void dpram_setup_common_op(struct dpram_link_device *dpld)
+{
+	dpld->clear_intr = clear_intr;
+	dpld->recv_intr = recv_intr;
+	dpld->send_intr = send_intr;
+	dpld->get_magic = get_magic;
+	dpld->set_magic = set_magic;
+	dpld->get_access = get_access;
+	dpld->set_access = set_access;
+	dpld->get_tx_head = get_tx_head;
+	dpld->get_tx_tail = get_tx_tail;
+	dpld->set_tx_head = set_tx_head;
+	dpld->set_tx_tail = set_tx_tail;
+	dpld->get_tx_buff = get_tx_buff;
+	dpld->get_tx_buff_size = get_tx_buff_size;
+	dpld->get_rx_head = get_rx_head;
+	dpld->get_rx_tail = get_rx_tail;
+	dpld->set_rx_head = set_rx_head;
+	dpld->set_rx_tail = set_rx_tail;
+	dpld->get_rx_buff = get_rx_buff;
+	dpld->get_rx_buff_size = get_rx_buff_size;
+	dpld->get_mask_req_ack = get_mask_req_ack;
+	dpld->get_mask_res_ack = get_mask_res_ack;
+	dpld->get_mask_send = get_mask_send;
+}
+
+static int dpram_link_init(struct link_device *ld, struct io_device *iod)
+{
+	return 0;
+}
+
 static void dpram_link_terminate(struct link_device *ld, struct io_device *iod)
 {
-	struct dpram_link_device *dpld = to_dpram_link_device(ld);
-
-	mif_info("dpram_link_terminate\n");
-
-	if (dpld->dpctl->terminate_link)
-			dpld->dpctl->terminate_link(dpld->dpctl);
+	return;
 }
-#endif
 
 struct link_device *dpram_create_link_device(struct platform_device *pdev)
 {
@@ -2059,6 +1541,7 @@ struct link_device *dpram_create_link_device(struct platform_device *pdev)
 	struct resource *res = NULL;
 	resource_size_t res_size;
 	struct modemlink_dpram_control *dpctl = NULL;
+	unsigned long task_data;
 	int ret = 0;
 	int i = 0;
 	int bsize;
@@ -2086,6 +1569,7 @@ struct link_device *dpram_create_link_device(struct platform_device *pdev)
 		goto err;
 	}
 	ld = &dpld->ld;
+	task_data = (unsigned long)dpld;
 
 	/* Retrieve modem data and DPRAM control data from the modem data */
 	ld->mdm_data = mdm_data;
@@ -2110,14 +1594,13 @@ struct link_device *dpram_create_link_device(struct platform_device *pdev)
 	}
 
 	/* Set attributes as a link device */
+	ld->init_comm = dpram_link_init;
+	ld->terminate_comm = dpram_link_terminate;
 	ld->send = dpram_send;
 	ld->force_dump = dpram_force_dump;
 	ld->dump_start = dpram_dump_start;
 	ld->dump_update = dpram_dump_update;
-	ld->ioctl = dpram_link_ioctl;
-#if defined(CONFIG_MACH_M0_CTC)
-	ld->terminate_comm = dpram_link_terminate;
-#endif
+	ld->ioctl = dpram_ioctl;
 
 	INIT_LIST_HEAD(&ld->list);
 
@@ -2128,8 +1611,10 @@ struct link_device *dpram_create_link_device(struct platform_device *pdev)
 	ld->skb_txq[IPC_RAW] = &ld->sk_raw_tx_q;
 	ld->skb_txq[IPC_RFS] = &ld->sk_rfs_tx_q;
 
-	/* For DPRAM dump */
-	dpld->dpram_dump = dpram_dump;
+	/* Set up function pointers */
+	dpram_setup_common_op(dpld);
+	dpld->dpram_dump = dpram_dump_memory;
+	dpld->ext_op = dpram_get_ext_op(mdm_data->modem_type);
 
 	/* Retrieve DPRAM resource */
 	if (!dpctl->dp_base) {
@@ -2165,8 +1650,6 @@ struct link_device *dpram_create_link_device(struct platform_device *pdev)
 	dpld->dpram_init_status = DPRAM_INIT_STATE_NONE;
 
 	/* Initialize locks, completions, and bottom halves */
-	spin_lock_init(&dpld->tx_lock);
-
 	snprintf(dpld->wlock_name, DP_MAX_NAME_LEN, "%s_wlock", ld->name);
 	wake_lock_init(&dpld->wlock, WAKE_LOCK_SUSPEND, dpld->wlock_name);
 
@@ -2178,7 +1661,9 @@ struct link_device *dpram_create_link_device(struct platform_device *pdev)
 	init_completion(&dpld->dump_start_complete);
 	init_completion(&dpld->dump_recv_done);
 
-	tasklet_init(&dpld->rx_tsk, dpram_ipc_rx_task, (unsigned long)dpld);
+	tasklet_init(&dpld->rx_tsk, dpram_ipc_rx_task, task_data);
+	if (dpld->ext_op && dpld->ext_op->dl_task)
+		tasklet_init(&dpld->dl_tsk, dpld->ext_op->dl_task, task_data);
 
 	/* Prepare RXB queue */
 	qsize = DPRAM_MAX_RXBQ_SIZE;
@@ -2204,9 +1689,8 @@ struct link_device *dpram_create_link_device(struct platform_device *pdev)
 		goto err;
 	}
 
-	/* Extra operations */
-	if (dpctl->load_init)
-		dpctl->load_init(dpctl);
+	/* Retrieve DPRAM IRQ GPIO# */
+	dpld->gpio_dpram_int = mdm_data->gpio_dpram_int;
 
 	/* Retrieve DPRAM IRQ# */
 	if (!dpctl->dpram_irq) {

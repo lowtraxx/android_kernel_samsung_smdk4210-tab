@@ -367,6 +367,10 @@ static enum power_supply_property sec_battery_props[] = {
 	POWER_SUPPLY_PROP_TECHNOLOGY,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_CAPACITY,
+#ifdef CONFIG_SLP
+	POWER_SUPPLY_PROP_CHARGE_NOW,
+	POWER_SUPPLY_PROP_CHARGE_FULL,
+#endif
 	POWER_SUPPLY_PROP_TEMP,
 	POWER_SUPPLY_PROP_CURRENT_AVG,
 };
@@ -492,6 +496,20 @@ static int sec_bat_get_property(struct power_supply *ps,
 		if (val->intval == -1)
 			return -EINVAL;
 		break;
+#ifdef CONFIG_SLP
+	case POWER_SUPPLY_PROP_CHARGE_FULL:
+		if (info->charging_status == POWER_SUPPLY_STATUS_FULL)
+			val->intval = true;
+		else
+			val->intval = false;
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_NOW:
+		if (info->charging_status == POWER_SUPPLY_STATUS_CHARGING)
+			val->intval = true;
+		else
+			val->intval = false;
+		break;
+#endif
 	case POWER_SUPPLY_PROP_CAPACITY:
 #ifdef CONFIG_TARGET_LOCALE_NA
 		if (info->charging_status != POWER_SUPPLY_STATUS_FULL

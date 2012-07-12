@@ -287,7 +287,7 @@ int ump_dmabuf_import_wrapper(u32 __user *argument,
 
 	_mali_osk_free(blocks);
 
-	ump_dmabuf.ump_handle = (uint32_t)ump_handle;
+	ump_dmabuf.secure_id = ump_dd_secure_id_get(ump_handle);
 	ump_dmabuf.size = ump_dd_size_get(ump_handle);
 
 	if (copy_to_user(argument, &ump_dmabuf,

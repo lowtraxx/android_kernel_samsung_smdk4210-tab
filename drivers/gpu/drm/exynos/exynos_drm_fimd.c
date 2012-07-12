@@ -125,7 +125,9 @@ struct fimd_context {
 	struct exynos_drm_panel_info *panel;
 	unsigned int			high_freq;
 	unsigned int			dynamic_refresh;
+#ifdef CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ
 	struct notifier_block		nb_exynos_display;
+#endif
 
 	struct work_struct		work;
 	bool				errata;
@@ -881,7 +883,7 @@ static int fimd_subdrv_probe(struct drm_device *drm_dev, struct device *dev)
 	return 0;
 }
 
-static void fimd_subdrv_remove(struct drm_device *drm_dev)
+static void fimd_subdrv_remove(struct drm_device *drm_dev, struct device *dev)
 {
 	DRM_DEBUG_KMS("%s\n", __FILE__);
 
@@ -1066,10 +1068,6 @@ static void exynos_drm_change_clock(struct fimd_context *ctx)
 	if (!ctx->dynamic_refresh) {
 		timing->refresh = 60;
 		ctx->clkdiv = fimd_calc_clkdiv(ctx, timing);
-#ifdef CONFIG_LCD_S6E8AA0
-		/* workaround: To apply dynamic refresh rate */
-		s6e8aa0_panel_cond(1);
-#endif
 		if (fimd_lite_dev && fimd_lite_dev->enabled) {
 			fimd_refresh->clkdiv = ctx->clkdiv;
 			fimd_lite_drv->change_clock(fimd_refresh,
@@ -1082,10 +1080,6 @@ static void exynos_drm_change_clock(struct fimd_context *ctx)
 		}
 	} else {
 		ctx->clkdiv = fimd_calc_clkdiv(ctx, timing);
-#ifdef CONFIG_LCD_S6E8AA0
-		/* workaround: To apply dynamic refresh rate */
-		s6e8aa0_panel_cond(ctx->high_freq);
-#endif
 		if (fimd_lite_dev && fimd_lite_dev->enabled) {
 			fimd_refresh->clkdiv = ctx->clkdiv;
 			fimd_lite_drv->change_clock(fimd_refresh,

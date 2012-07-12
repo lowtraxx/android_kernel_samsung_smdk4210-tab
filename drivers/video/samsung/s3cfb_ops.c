@@ -550,14 +550,13 @@ int s3cfb_check_var(struct fb_var_screeninfo *var, struct fb_info *fb)
 void s3cfb_set_win_params(struct s3cfb_global *fbdev, int id)
 {
 	s3cfb_set_window_control(fbdev, id);
-#if 0
+#if defined(CONFIG_CPU_EXYNOS4212) || defined(CONFIG_CPU_EXYNOS4412)
+	s3cfb_set_oneshot(fbdev, id);
+#else
 	s3cfb_set_window_position(fbdev, id);
 	s3cfb_set_window_size(fbdev, id);
 	s3cfb_set_buffer_address(fbdev, id);
 	s3cfb_set_buffer_size(fbdev, id);
-#else
-	s3cfb_set_oneshot(fbdev, id);
-	s3cfb_set_buffer_address(fbdev, id);
 #endif
 
 	if (id > 0) {
@@ -1034,22 +1033,32 @@ int s3cfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *fb)
 {
 	struct s3cfb_window *win = fb->par;
 	struct s3cfb_global *fbdev = get_fimd_global(win->id);
+	struct s3c_platform_fb *pdata = to_fb_plat(fbdev->dev);
+
+	if (win->id == pdata->default_win)
+		spin_lock(&fbdev->slock);
 
 #ifdef CONFIG_EXYNOS_DEV_PD
 	if (unlikely(fbdev->system_state == POWER_OFF) || fbdev->regs == 0) {
 		dev_err(fbdev->dev, "%s::system_state is POWER_OFF, fb%d\n", __func__, win->id);
-		return 0;
+		if (win->id == pdata->default_win)
+			spin_unlock(&fbdev->slock);
+		return -EINVAL;
 	}
 #endif
 
 	if (var->yoffset + var->yres > var->yres_virtual) {
 		dev_err(fbdev->dev, "invalid yoffset value\n");
+		if (win->id == pdata->default_win)
+			spin_unlock(&fbdev->slock);
 		return -EINVAL;
 	}
 
 #if defined(CONFIG_CPU_EXYNOS4210)
 	if (unlikely(var->xoffset + var->xres > var->xres_virtual)) {
 		dev_err(fbdev->dev, "invalid xoffset value\n");
+		if (win->id == pdata->default_win)
+			spin_unlock(&fbdev->slock);
 		return -EINVAL;
 	}
 	fb->var.xoffset = var->xoffset;
@@ -1062,6 +1071,8 @@ int s3cfb_pan_display(struct fb_var_screeninfo *var, struct fb_info *fb)
 
 	s3cfb_set_buffer_address(fbdev, win->id);
 
+	if (win->id == pdata->default_win)
+		spin_unlock(&fbdev->slock);
 	return 0;
 }
 
@@ -1090,7 +1101,6 @@ int s3cfb_ioctl(struct fb_info *fb, unsigned int cmd, unsigned long arg)
 	struct s3cfb_lcd *lcd = fbdev->lcd;
 	void *argp = (void *)arg;
 	int ret = 0;
-	void __iomem *regs;
 #if defined(CONFIG_CPU_EXYNOS4210)
 	unsigned int addr = 0;
 #endif
@@ -1123,13 +1133,12 @@ int s3cfb_ioctl(struct fb_info *fb, unsigned int cmd, unsigned long arg)
 			return 0;
 #if defined(CONFIG_CPU_EXYNOS4212) || defined(CONFIG_CPU_EXYNOS4412)
 		/* Enable Vsync */
-		regs = fbdev->regs;
 #ifdef CONFIG_CPU_EXYNOS4412
 		if (!fbdev->regs)
 			return ret;
 #endif
-		s3cfb_set_global_interrupt(fbdev, regs, 1);
-		s3cfb_set_vsync_interrupt(fbdev, regs, 1);
+		s3cfb_set_global_interrupt(fbdev, 1);
+		s3cfb_set_vsync_interrupt(fbdev, 1);
 #endif
 		/* Wait for Vsync */
 		s3cfb_wait_for_vsync(fbdev);
@@ -1137,8 +1146,8 @@ int s3cfb_ioctl(struct fb_info *fb, unsigned int cmd, unsigned long arg)
 			return 0;
 #if defined(CONFIG_CPU_EXYNOS4212) || defined(CONFIG_CPU_EXYNOS4412)
 		/* Disable Vsync */
-		s3cfb_set_global_interrupt(fbdev, regs, 0);
-		s3cfb_set_vsync_interrupt(fbdev, regs, 0);
+		s3cfb_set_global_interrupt(fbdev, 0);
+		s3cfb_set_vsync_interrupt(fbdev, 0);
 #endif
 		break;
 
@@ -1148,6 +1157,10 @@ int s3cfb_ioctl(struct fb_info *fb, unsigned int cmd, unsigned long arg)
 				   sizeof(p.user_window)))
 			ret = -EFAULT;
 		else {
+#if defined(CONFIG_CPU_EXYNOS4212) || defined(CONFIG_CPU_EXYNOS4412)
+			win->x = p.user_window.x;
+			win->y = p.user_window.y;
+#else
 			if (p.user_window.x < 0)
 				p.user_window.x = 0;
 
@@ -1165,6 +1178,7 @@ int s3cfb_ioctl(struct fb_info *fb, unsigned int cmd, unsigned long arg)
 				win->y = p.user_window.y;
 
 			s3cfb_set_window_position(fbdev, win->id);
+#endif
 		}
 		break;
 
@@ -1203,13 +1217,12 @@ int s3cfb_ioctl(struct fb_info *fb, unsigned int cmd, unsigned long arg)
 		if (get_user(p.vsync, (int __user *)arg))
 			ret = -EFAULT;
 		else {
-			regs = fbdev->regs;
 #ifdef CONFIG_CPU_EXYNOS4412
-			if (!regs)
+			if (!fbdev->regs)
 				return ret;
 #endif
-			s3cfb_set_global_interrupt(fbdev, regs, p.vsync);
-			s3cfb_set_vsync_interrupt(fbdev, regs, p.vsync);
+			s3cfb_set_global_interrupt(fbdev, p.vsync);
+			s3cfb_set_vsync_interrupt(fbdev, p.vsync);
 		}
 		break;
 
@@ -1364,7 +1377,6 @@ int s3cfb_direct_ioctl(int id, unsigned int cmd, unsigned long arg)
 	struct s3cfb_window *win = fb->par;
 	struct s3cfb_lcd *lcd = fbdev->lcd;
 	struct s3cfb_user_window user_win;
-	void __iomem *regs;
 #ifdef CONFIG_EXYNOS_DEV_PD
 	struct platform_device *pdev = to_platform_device(fbdev->dev);
 #endif
@@ -1501,16 +1513,14 @@ int s3cfb_direct_ioctl(int id, unsigned int cmd, unsigned long arg)
 		break;
 
 	case S3CFB_SET_VSYNC_INT:
-		regs = fbdev->regs;
 		if (argp)
-			s3cfb_set_global_interrupt(fbdev, regs, 1);
+			s3cfb_set_global_interrupt(fbdev, 1);
 
-		s3cfb_set_vsync_interrupt(fbdev, regs, (int)argp);
+		s3cfb_set_vsync_interrupt(fbdev, (int)argp);
 		break;
 
 	case S3CFB_GET_VSYNC_INT_STATUS:
-		regs = fbdev->regs;
-		ret = s3cfb_get_vsync_interrupt(fbdev, regs);
+		ret = s3cfb_get_vsync_interrupt(fbdev);
 		break;
 
 	default:

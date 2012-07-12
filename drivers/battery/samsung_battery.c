@@ -111,14 +111,6 @@ static int battery_get_temper(struct battery_info *info)
 		temper = value.intval;
 		break;
 	case TEMPER_AP_ADC:
-#if defined(CONFIG_MACH_S2PLUS)
-		if (system_rev < 2) {
-			pr_info("%s: adc fixed as 30.0\n", __func__);
-			temper = 300;
-			mutex_unlock(&info->ops_lock);
-			return temper;
-		}
-#endif
 #if defined(CONFIG_S3C_ADC)
 		adc = adc_max = adc_min = adc_total = 0;
 		for (cnt = 0; cnt < CNT_ADC_SAMPLE; cnt++) {
@@ -293,7 +285,14 @@ void battery_update_info(struct battery_info *info)
 	value.intval = SOC_TYPE_ADJUSTED;
 	info->psy_fuelgauge->get_property(info->psy_fuelgauge,
 					  POWER_SUPPLY_PROP_CAPACITY, &value);
-	info->battery_soc = value.intval;
+
+	if ((info->cable_type == POWER_SUPPLY_TYPE_BATTERY) &&
+		(info->battery_soc < value.intval) && (info->monitor_count))
+		pr_info("%s: new soc(%d) is bigger than prev soc(%d)"
+					" in discharging state\n", __func__,
+					value.intval, info->battery_soc);
+	else
+		info->battery_soc = value.intval;
 
 	value.intval = SOC_TYPE_RAW;
 	info->psy_fuelgauge->get_property(info->psy_fuelgauge,
@@ -382,19 +381,8 @@ void battery_control_info(struct battery_info *info,
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 #if defined(CONFIG_CHARGER_MAX8922_U1)
-#if defined(CONFIG_MACH_S2PLUS)
-		if (system_rev >= 2) {
-			info->psy_sub_charger->set_property(
-						info->psy_sub_charger,
-						property, &value);
-		} else {
-			info->psy_charger->set_property(info->psy_charger,
-						property, &value);
-		}
-#else
 		info->psy_sub_charger->set_property(info->psy_sub_charger,
 						property, &value);
-#endif
 #else
 		info->psy_charger->set_property(info->psy_charger,
 						property, &value);
@@ -411,10 +399,92 @@ void battery_control_info(struct battery_info *info,
 	}
 }
 
-static void samsung_battery_alarm_start(struct alarm *alarm)
+static void battery_event_alarm(struct alarm *alarm)
 {
 	struct battery_info *info = container_of(alarm, struct battery_info,
-						 alarm);
+								 event_alarm);
+	pr_info("%s: exit event state, %ds gone\n", __func__,
+				info->pdata->event_time);
+
+	/* clear event state */
+	info->event_state = EVENT_STATE_CLEAR;
+
+	wake_lock(&info->monitor_wake_lock);
+	schedule_work(&info->monitor_work);
+}
+
+void battery_event_control(struct battery_info *info)
+{
+	int event_num;
+	ktime_t interval, next, slack;
+	/* sync with event_type in samsung_battery.h */
+	char *event_type_name[] = { "WCDMA CALL", "GSM CALL", "CALL",
+					"VIDEO", "MUSIC", "BROWSER",
+					"HOTSPOT", "CAMERA", "DATA CALL",
+					"GPS", "LTE", "WIFI",
+					"USE", "UNKNOWN"
+	};
+
+	pr_debug("%s\n", __func__);
+
+	if (info->event_type) {
+		pr_info("%s: in event state(%d), type(0x%04x)\n", __func__,
+					info->event_state, info->event_type);
+
+		for (event_num = 0; event_num < EVENT_TYPE_MAX; event_num++) {
+			if (info->event_type & (1 << event_num))
+				pr_info("%s: %d: %s\n", __func__, event_num,
+						event_type_name[event_num]);
+		}
+
+		if (info->event_state == EVENT_STATE_SET) {
+			pr_info("%s: event already set, event(%d, 0x%04x)\n",
+				__func__, info->event_state, info->event_type);
+		} else if (info->event_state == EVENT_STATE_IN_TIMER) {
+			pr_info("%s: cancel event timer\n", __func__);
+
+			alarm_cancel(&info->event_alarm);
+
+			info->event_state = EVENT_STATE_SET;
+
+			wake_lock(&info->monitor_wake_lock);
+			schedule_work(&info->monitor_work);
+		} else {
+			pr_info("%s: enter event state(%d, 0x%04x)\n",
+				__func__, info->event_state, info->event_type);
+
+			info->event_state = EVENT_STATE_SET;
+
+			wake_lock(&info->monitor_wake_lock);
+			schedule_work(&info->monitor_work);
+		}
+	} else {
+		pr_info("%s: clear event type(0x%04x), wait %ds\n", __func__,
+				info->event_type, info->pdata->event_time);
+
+		if (info->event_state == EVENT_STATE_SET) {
+			pr_info("%s: start event timer\n", __func__);
+			info->last_poll = alarm_get_elapsed_realtime();
+
+			interval = ktime_set(info->pdata->event_time, 0);
+			next = ktime_add(info->last_poll, interval);
+			slack = ktime_set(20, 0);
+
+			alarm_start_range(&info->event_alarm, next,
+						ktime_add(next, slack));
+
+			info->event_state = EVENT_STATE_IN_TIMER;
+		} else {
+			pr_info("%s: event already clear, event(%d, 0x%04x)\n",
+				__func__, info->event_state, info->event_type);
+		}
+	}
+}
+
+static void battery_monitor_alarm(struct alarm *alarm)
+{
+	struct battery_info *info = container_of(alarm, struct battery_info,
+								 monitor_alarm);
 	pr_debug("%s\n", __func__);
 
 	wake_lock(&info->monitor_wake_lock);
@@ -471,7 +541,7 @@ static void battery_monitor_interval(struct battery_info *info)
 	next = ktime_add(info->last_poll, interval);
 	slack = ktime_set(20, 0);
 
-	alarm_start_range(&info->alarm, next, ktime_add(next, slack));
+	alarm_start_range(&info->monitor_alarm, next, ktime_add(next, slack));
 
 	local_irq_restore(flags);
 }
@@ -518,10 +588,16 @@ static bool battery_abstimer_cond(struct battery_info *info)
 	ktime = alarm_get_elapsed_realtime();
 	current_time = ktime_to_timespec(ktime);
 
-	if (info->recharge_phase)
+	if (info->recharge_phase) {
 		abstimer_duration = info->pdata->abstimer_recharge_duration;
-	else
-		abstimer_duration = info->pdata->abstimer_charge_duration;
+	} else {
+		if (info->cable_type == POWER_SUPPLY_TYPE_WIRELESS)
+			abstimer_duration =
+				info->pdata->abstimer_charge_duration_wpc;
+		else
+			abstimer_duration =
+				info->pdata->abstimer_charge_duration;
+	}
 
 	if ((current_time.tv_sec - info->charge_start_time) >
 	    abstimer_duration) {
@@ -545,8 +621,8 @@ static bool battery_fullcharged_cond(struct battery_info *info)
 	int f_cond_vcell;
 	pr_debug("%s\n", __func__);
 
-	/* max voltage - 50mV */
-	f_cond_vcell = info->pdata->voltage_max - 50000;
+	/* max voltage - RECHG_DROP_VALUE: recharge voltage */
+	f_cond_vcell = info->pdata->voltage_max - RECHG_DROP_VALUE;
 	/* max soc - 5% */
 	f_cond_soc = 95;
 
@@ -691,22 +767,28 @@ static bool battery_temper_cond(struct battery_info *info)
 	int frz_stop, frz_recover;
 	pr_debug("%s\n", __func__);
 
-	/* common temperature threshold */
-	ovh_recover = info->pdata->overheat_recovery_temp;
-	frz_stop = info->pdata->freeze_stop_temp;
-	frz_recover = info->pdata->freeze_recovery_temp;
-
 	/* update overheat temperature threshold */
-	if ((info->pdata->ctia_spec == true) && (info->lpm_state))
+	if ((info->pdata->ctia_spec == true) && (info->lpm_state)) {
 		ovh_stop = info->pdata->lpm_overheat_stop_temp;
-	else if ((info->pdata->ctia_spec == true) && (info->event_state))
+		ovh_recover = info->pdata->lpm_overheat_recovery_temp;
+		frz_stop = info->pdata->lpm_freeze_stop_temp;
+		frz_recover = info->pdata->lpm_freeze_recovery_temp;
+	} else if ((info->pdata->ctia_spec == true) &&
+			(info->event_state != EVENT_STATE_CLEAR)) {
 		ovh_stop = info->pdata->event_overheat_stop_temp;
-	else
+		ovh_recover = info->pdata->event_overheat_recovery_temp;
+		frz_stop = info->pdata->event_freeze_stop_temp;
+		frz_recover = info->pdata->event_freeze_recovery_temp;
+		pr_info("%s: ovh(%d/%d), frz(%d/%d), lpm(%d), "
+			"event(%d, 0x%04x)\n", __func__,
+			ovh_stop, ovh_recover, frz_stop, frz_recover,
+			info->lpm_state, info->event_state, info->event_type);
+	} else {
 		ovh_stop = info->pdata->overheat_stop_temp;
-
-	pr_debug("%s: ovh(%d/%d), frz(%d/%d), lpm(%d), event(%d)\n", __func__,
-				ovh_stop, ovh_recover, frz_stop, frz_recover,
-				info->lpm_state, info->event_state);
+		ovh_recover = info->pdata->overheat_recovery_temp;
+		frz_stop = info->pdata->freeze_stop_temp;
+		frz_recover = info->pdata->freeze_recovery_temp;
+	}
 
 	if (info->temper_state == false) {
 		if (info->charge_real_state != POWER_SUPPLY_STATUS_CHARGING) {
@@ -1190,7 +1272,7 @@ static void battery_monitor_work(struct work_struct *work)
 	/* check unspec recovery */
 	if (info->is_unspec_phase) {
 		if ((info->battery_health !=
-			POWER_SUPPLY_HEALTH_UNSPEC_FAILURE) &&
+			POWER_SUPPLY_HEALTH_UNDERVOLTAGE) &&
 			(battery_terminal_check_support(info) == false)) {
 			pr_info("%s: recover from unspec phase!\n", __func__);
 			info->is_unspec_recovery = true;
@@ -1499,20 +1581,23 @@ static void battery_error_control(struct battery_info *info)
 		}
 	} else if (info->health_state == true) {
 		if ((info->battery_health ==
-			POWER_SUPPLY_HEALTH_UNSPEC_FAILURE) ||
+			POWER_SUPPLY_HEALTH_UNDERVOLTAGE) ||
 			battery_terminal_check_support(info)) {
-			pr_info("%s: battery unspec, "
-				"disable charging and off the "
-				"system path!\n", __func__);
+			pr_info("%s: under-voltage state!", __func__);
 
 			/* invalid top-off state,
 				assume terminals(+/-) open */
+			pr_info("%s: disable charging and off the "
+				"system path!\n", __func__);
 			battery_charge_control(info, OFF_CURR, OFF_CURR);
 			pr_info("%s: set unspec phase!\n", __func__);
 			info->is_unspec_phase = true;
 		} else if (info->battery_health ==
 				POWER_SUPPLY_HEALTH_OVERVOLTAGE)
 			pr_info("%s: vbus ovp state!", __func__);
+		else if (info->battery_health ==
+				POWER_SUPPLY_HEALTH_UNSPEC_FAILURE)
+			pr_info("%s: uspec state from charger", __func__);
 	}
 
 	return;
@@ -1532,6 +1617,10 @@ static enum power_supply_property samsung_battery_props[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_CURRENT_MAX,
 	POWER_SUPPLY_PROP_CURRENT_NOW,
+#ifdef CONFIG_SLP
+	POWER_SUPPLY_PROP_CHARGE_FULL,
+	POWER_SUPPLY_PROP_CHARGE_NOW,
+#endif
 	POWER_SUPPLY_PROP_CAPACITY,
 	POWER_SUPPLY_PROP_TEMP,
 };
@@ -1579,6 +1668,20 @@ static int samsung_battery_get_property(struct power_supply *ps,
 	case POWER_SUPPLY_PROP_CAPACITY:
 		val->intval = info->battery_soc;
 		break;
+#ifdef CONFIG_SLP
+	case POWER_SUPPLY_PROP_CHARGE_FULL:
+		if (info->full_charged_state)
+			val->intval = true;
+		else
+			val->intval = false;
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_NOW:
+		if (info->charge_real_state == POWER_SUPPLY_STATUS_CHARGING)
+			val->intval = true;
+		else
+			val->intval = false;
+		break;
+#endif
 	case POWER_SUPPLY_PROP_TEMP:
 		val->intval = info->battery_temper;
 		break;
@@ -1733,17 +1836,15 @@ static __devinit int samsung_battery_probe(struct platform_device *pdev)
 	pr_info("%s: Recharge voltage: %d\n", __func__,
 				info->pdata->recharge_voltage);
 
-	if (info->pdata->ctia_spec == true)
-		pr_info("%s: applied CTIA spec\n", __func__);
-	else
+	if (info->pdata->ctia_spec == true) {
+		pr_info("%s: applied CTIA spec, event time(%ds)\n",
+				__func__, info->pdata->event_time);
+	} else
 		pr_info("%s: not applied CTIA spec\n", __func__);
 
 #if defined(CONFIG_S3C_ADC)
-#if defined(CONFIG_MACH_S2PLUS)
-	if (system_rev >= 2)
-#endif
-		/* adc register */
-		info->adc_client = s3c_adc_register(pdev, NULL, NULL, 0);
+	/* adc register */
+	info->adc_client = s3c_adc_register(pdev, NULL, NULL, 0);
 
 	if (IS_ERR(info->adc_client)) {
 		pr_err("%s: fail to register adc\n", __func__);
@@ -1839,8 +1940,14 @@ static __devinit int samsung_battery_probe(struct platform_device *pdev)
 
 	/* Using android alarm for gauging instead of workqueue */
 	info->last_poll = alarm_get_elapsed_realtime();
-	alarm_init(&info->alarm, ANDROID_ALARM_ELAPSED_REALTIME_WAKEUP,
-		   samsung_battery_alarm_start);
+	alarm_init(&info->monitor_alarm,
+			ANDROID_ALARM_ELAPSED_REALTIME_WAKEUP,
+			battery_monitor_alarm);
+
+	if (info->pdata->ctia_spec == true)
+		alarm_init(&info->event_alarm,
+				ANDROID_ALARM_ELAPSED_REALTIME_WAKEUP,
+				battery_event_alarm);
 
 	/* update battery init status */
 	schedule_work(&info->monitor_work);
@@ -1889,6 +1996,10 @@ static int __devexit samsung_battery_remove(struct platform_device *pdev)
 	struct battery_info *info = platform_get_drvdata(pdev);
 
 	remove_proc_entry("battery_info_proc", NULL);
+
+	alarm_cancel(&info->monitor_alarm);
+	if (info->pdata->ctia_spec == true)
+		alarm_cancel(&info->event_alarm);
 
 	cancel_work_sync(&info->error_work);
 	cancel_work_sync(&info->monitor_work);
@@ -1942,6 +2053,8 @@ static void samsung_battery_complete(struct device *dev)
 	pr_info("%s\n", __func__);
 
 	info->monitor_mode = MONITOR_NORM;
+
+	battery_monitor_interval(info);
 }
 
 static int samsung_battery_suspend(struct device *dev)

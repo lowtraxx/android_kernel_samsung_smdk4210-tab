@@ -67,8 +67,7 @@ static void exynos_drm_crtc_apply(struct drm_crtc *crtc)
 
 	exynos_drm_fn_encoder(crtc, overlay,
 			exynos_drm_encoder_crtc_mode_set);
-	exynos_drm_fn_encoder(crtc, &exynos_crtc->pipe,
-			exynos_drm_encoder_crtc_commit);
+	exynos_drm_fn_encoder(crtc, NULL, exynos_drm_encoder_crtc_commit);
 }
 
 int exynos_drm_overlay_update(struct exynos_drm_overlay *overlay,
@@ -231,8 +230,7 @@ static void exynos_drm_crtc_commit(struct drm_crtc *crtc)
 					exynos_drm_encoder_dpms_from_crtc);
 	}
 
-	exynos_drm_fn_encoder(crtc, &exynos_crtc->pipe,
-			exynos_drm_encoder_crtc_commit);
+	exynos_drm_fn_encoder(crtc, NULL, exynos_drm_encoder_crtc_commit);
 }
 
 static bool
@@ -251,6 +249,11 @@ exynos_drm_crtc_mode_set(struct drm_crtc *crtc, struct drm_display_mode *mode,
 			  struct drm_display_mode *adjusted_mode, int x, int y,
 			  struct drm_framebuffer *old_fb)
 {
+	struct exynos_drm_crtc *exynos_crtc = to_exynos_crtc(crtc);
+	struct exynos_drm_overlay *overlay = &exynos_crtc->overlay;
+	int pipe = exynos_crtc->pipe;
+	int ret;
+
 	DRM_DEBUG_KMS("%s\n", __FILE__);
 
 	/*
@@ -259,7 +262,14 @@ exynos_drm_crtc_mode_set(struct drm_crtc *crtc, struct drm_display_mode *mode,
 	 */
 	memcpy(&crtc->mode, adjusted_mode, sizeof(*adjusted_mode));
 
-	return exynos_drm_crtc_update(crtc);
+	ret = exynos_drm_crtc_update(crtc);
+	if (ret)
+		return ret;
+
+	exynos_drm_fn_encoder(crtc, overlay, exynos_drm_encoder_crtc_mode_set);
+	exynos_drm_fn_encoder(crtc, &pipe, exynos_drm_encoder_crtc_pipe);
+
+	return 0;
 }
 
 static int exynos_drm_crtc_mode_set_base(struct drm_crtc *crtc, int x, int y,

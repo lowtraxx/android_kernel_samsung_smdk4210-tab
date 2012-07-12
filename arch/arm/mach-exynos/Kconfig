@@ -799,57 +799,6 @@ config MACH_NURI
 	help
 	  Machine support for Samsung Mobile NURI Board.
 
-config MACH_TRATS
-	bool "Samsung TRATS board"
-	select MACH_U1_BD
-	select CPU_EXYNOS4210
-	select S5P_GPIO_INT
-	select S5P_DEV_FIMD0
-	select S5P_DEV_FIMD_S5P
-	select S5P_DEV_TVOUT
-	select S5P_DEV_MFC
-	select S5P_DEV_FIMG2D
-	select S5P_DEV_USB_EHCI
-	select S5P_SYSTEM_MMU
-	select S5P_DEV_USBGADGET
-	select S3C_DEV_RTC
-	select S3C_DEV_WDT
-	select S3C_DEV_I2C1
-	select S3C_DEV_I2C3
-	select S3C_DEV_I2C5
-	select S3C_DEV_I2C6
-	select S3C_DEV_I2C7
-	select S3C_DEV_I2C8_EMUL
-	select S3C_DEV_I2C9_EMUL
-	select EXYNOS4_DEV_MSHC
-	select EXYNOS4_MSHC_MPLL_40MHZ
-	select EXYNOS4_MSHC_DDR
-	select EXYNOS4_MSHC_8BIT
-	select S3C_DEV_HSMMC2
-	select S3C_DEV_HSMMC3
-	select SAMSUNG_DEV_ADC
-	select SAMSUNG_DEV_TS
-	select SAMSUNG_DEV_TS1
-	select EXYNOS_DEV_PD
-	select S5P_SYSTEM_MMU
-	select EXYNOS4_SETUP_FIMD0
-	select EXYNOS4_SETUP_I2C1
-	select EXYNOS4_SETUP_I2C3
-	select EXYNOS4_SETUP_I2C5
-	select EXYNOS4_SETUP_I2C6
-	select EXYNOS4_SETUP_I2C7
-	select EXYNOS4_SETUP_SDHCI
-	select EXYNOS4_SETUP_MSHCI
-	select EXYNOS4_SETUP_MFC
-	select EXYNOS4_SETUP_FB_S5P
-	select EXYNOS4_SETUP_USB_PHY
-	select EXYNOS4_SETUP_THERMAL
-	help
-	  Machine support for Samsung Mobile TRATS Board.
-	  TRATS is one of Samsung mobile division product based on ARM SOC but
-	  it is not for sale, just released for internal development and outer
-	  developer for Tizen project.
-
 config MACH_U1
 	bool "U1 board"
 	select CPU_EXYNOS4210
@@ -899,7 +848,7 @@ config MACH_U1
 
 choice
 	prompt "U1 board"
-	depends on MACH_U1
+	depends on MACH_U1 || MACH_TRATS
 	default MACH_U1_BD
 
 config MACH_U1_BD
@@ -982,7 +931,7 @@ endchoice
 
 choice
 	prompt "LCD panel select"
-	depends on MACH_U1
+	depends on MACH_U1 || MACH_TRATS
 	default PANEL_U1
 
 config PANEL_U1
@@ -990,10 +939,7 @@ config PANEL_U1
 
 endchoice
 
-config PANEL_S2PLUS
-	bool "s2plus panel"
-
-if MACH_U1 || MACH_C1 || MACH_C1VZW || MACH_M0 || MACH_P4 || MACH_P2 || MACH_P4NOTE || MACH_T0
+if MACH_U1 || MACH_C1 || MACH_C1VZW || MACH_C2 || MACH_M0 || MACH_P4 || MACH_P2 || MACH_P4NOTE || MACH_T0 || MACH_TRATS || MACH_GRANDE
 source "arch/arm/mach-exynos/Kconfig.local"
 endif
 
@@ -1089,24 +1035,10 @@ config MACH_MIDAS
 choice
 	prompt "EXYNOS4212 board"
 	depends on MACH_MIDAS
-	default MACH_MIDAS_02_BD
-
-config MACH_MIDAS_01_BD
-	bool "Midas Rev 0.1 board"
-
-config MACH_MIDAS_02_BD
-	bool "Midas Rev 0.2 board"
-	select S3C_DEV_I2C4
-	select S3C_DEV_I2C5
+	default MACH_M0
 
 config MACH_M0
 	bool "M0 board"
-	select S3C_DEV_I2C4
-	select S3C_DEV_I2C5
-	select MIDAS_COMMON_BD
-
-config MACH_M3
-	bool "M3 board"
 	select S3C_DEV_I2C4
 	select S3C_DEV_I2C5
 	select MIDAS_COMMON_BD
@@ -1123,28 +1055,10 @@ config MACH_C1VZW
 	select S3C_DEV_I2C5
 	select MIDAS_COMMON_BD
 
-config MACH_C1CTC
-	bool "C1 CTC board"
+config MACH_C2
+	bool "C2 board"
 	select S3C_DEV_I2C4
 	select S3C_DEV_I2C5
-	select MIDAS_COMMON_BD
-
-config MACH_JENGA
-	bool "Jenga board"
-	select S3C_DEV_I2C4
-	select S3C_DEV_I2C5
-	select MIDAS_COMMON_BD
-
-config MACH_S2PLUS
-	bool "S2PLUS board"
-	select S3C_DEV_I2C4
-	select S3C_DEV_I2C5
-	select PANEL_S2PLUS
-	select MIDAS_COMMON_BD
-
-config MACH_S2PLUS
-	bool "S2 Plus board"
-	select S3C_DEV_I2C4
 	select MIDAS_COMMON_BD
 
 config MACH_P4NOTE
@@ -1161,10 +1075,27 @@ config MACH_GC1
 
 config MACH_T0
 	bool "T0 board"
+	select EXYNOS4_SETUP_I2C2
+	select S3C_DEV_I2C2
 	select S3C_DEV_I2C4
 	select S3C_DEV_I2C5
 	select T0_00_BD
 
+config MACH_IRON
+	bool "Iron board"
+	select S3C_DEV_I2C4
+	select S3C_DEV_I2C5
+	select IRON_BD
+	select EXYNOS4_SETUP_KEYPAD
+	select SAMSUNG_DEV_KEYPAD
+
+config MACH_GRANDE
+	bool "Grande board"
+	select S3C_DEV_I2C4
+	select S3C_DEV_I2C5
+	select GRANDE_BD
+	select EXYNOS4_SETUP_KEYPAD
+	select SAMSUNG_DEV_KEYPAD
 endchoice
 
 config MIDAS_COMMON_BD
@@ -1178,6 +1109,12 @@ config GC1_00_BD
 
 config T0_00_BD
 	bool "T0 common Board"
+
+config IRON_BD
+	bool "Iron common Board"
+
+config GRANDE_BD
+	bool "Grande common Board"
 
 source "arch/arm/mach-exynos/Kconfig.slp"
 
@@ -1514,16 +1451,6 @@ config SEC_DEBUG_SCHED_LOG_NONCACHED
 	  need to concern cache flush status for analyzing sudden
 	  lockup issue.
 
-config SEC_DEBUG_ALLOC_PROFILE
-	bool "Samsung Allocation Profile Feature"
-	default n
-	depends on SEC_DEBUG_SCHED_LOG
-	help
-	  Samsung Allocation Profiler.
-	  This option enables samsung allocation profiler.
-	  To figure out latency, slowpath must be carefully examined.
-	  We can clarify if latency is caused by memory shortage.
-
 config SEC_DEBUG_SEMAPHORE_LOG
 	bool "Samsung Semaphore Logging Feature"
 	default n
@@ -1692,28 +1619,12 @@ config SEC_MODEM_C1_LGT
 	select LINK_DEVICE_USB
 	select USBHUB_USB3503
 
-config SEC_MODEM_C1_CTC
-	bool "C1 with MDM6600"
-	select CDMA_MODEM_MDM6600
-	select LINK_DEVICE_DPRAM
-	select USBHUB_USB3503
-
 config SEC_MODEM_M2
 	bool "M2 with MDM9x15"
 
 config SEC_MODEM_U1
 	bool "U1 with xmm6260"
 	select UMTS_MODEM_XMM6260
-	select LINK_DEVICE_HSIC
-
-config SEC_MODEM_JENGA
-	bool "JENGA with xmm6262"
-	select UMTS_MODEM_XMM6262
-	select LINK_DEVICE_HSIC
-
-config SEC_MODEM_S2PLUS
-	bool "S2PLUS with xmm6262"
-	select UMTS_MODEM_XMM6262
 	select LINK_DEVICE_HSIC
 
 config SEC_MODEM_U1_LGT
@@ -1725,6 +1636,11 @@ config SEC_MODEM_GAIA
 	bool "GAIA with cmc221"
 	select LTE_MODEM_CMC221
 	select LINK_DEVICE_DPRAM
+
+config SEC_MODEM_IRON
+	bool "Iron with xmm6262"
+	select UMTS_MODEM_XMM6262
+	select LINK_DEVICE_HSIC
 
 config SEC_MODEM_P8LTE
 	bool "P8 VZW with CMC220 and CBP7.1"
@@ -1779,6 +1695,10 @@ config QC_MODEM_MDM9X15
 	bool "support QC mdm9x15 modem"
 	default n
 
+config MDM_HSIC_PM
+	bool "support QC mdm9x15 PM over HSIC"
+	default n
+
 if QC_MODEM
 choice
 	prompt "QC MODEM CONFIG"
@@ -1793,6 +1713,8 @@ config QC_MODEM_M3
 	select USB_QCOM_MDM_BRIDGE
 	select QC_MODEM_MDM9X15
 	select MSM_RMNET_USB
+	select DIAG_CHAR
+	select MDM_HSIC_PM
 
 endchoice
 endif
@@ -1800,3 +1722,15 @@ endif
 config SAMSUNG_PRODUCT_SHIP
 	bool "set up for product shippling"
 	default n
+
+config CORESIGHT_ETM
+	bool "CoreSight ETM debug system"
+	help
+	  Enables the CoreSight ETM debug system.
+
+config CORESIGHT_ETM_DEFAULT_ENABLE
+	bool "Turn on ETM Tracing by Default"
+	depends on CORESIGHT_ETM
+	help
+	  Turns on ETM tracing by default. Otherwise, tracing is
+	  disabled by default but can be enabled by other means.
